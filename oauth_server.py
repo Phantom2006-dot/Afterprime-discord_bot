@@ -14,7 +14,11 @@ oauth_states = {}
 
 @app.get("/")
 async def root():
-    return {"message": "Social Army OAuth Server Running - Multi-Platform Support"}
+    return {
+        "message": "Social Army OAuth Server Running - Multi-Platform Support",
+        "base_url": config.BASE_URL,
+        "linkedin_redirect_uri": config.LINKEDIN_REDIRECT_URI
+    }
 
 @app.get("/oauth/{platform}/start")
 async def oauth_start(platform: str, discord_id: str):
