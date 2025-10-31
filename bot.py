@@ -93,12 +93,13 @@ async def connect(interaction: discord.Interaction):
 
 @bot.tree.command(name="missions", description="View active missions")
 async def missions(interaction: discord.Interaction):
+    await interaction.response.defer()
     session = get_session()
     try:
         active_missions = session.query(Mission).filter_by(status='active').all()
         
         if not active_missions:
-            await interaction.response.send_message("No active missions right now. Check back soon!", ephemeral=True)
+            await interaction.followup.send("No active missions right now. Check back soon!", ephemeral=True)
             return
         
         embed = discord.Embed(
@@ -116,7 +117,7 @@ async def missions(interaction: discord.Interaction):
                 inline=False
             )
         
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
     finally:
         session.close()
 
@@ -288,12 +289,13 @@ class ConfirmPostView(discord.ui.View):
 
 @bot.tree.command(name="score", description="Check your current score")
 async def score(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     session = get_session()
     try:
         user = session.query(User).filter_by(discord_id=str(interaction.user.id)).first()
         
         if not user:
-            await interaction.response.send_message("You haven't joined Social Army yet! Use `/connect` to get started.", ephemeral=True)
+            await interaction.followup.send("You haven't joined Social Army yet! Use `/connect` to get started.", ephemeral=True)
             return
         
         posts_count = session.query(Post).filter_by(user_id=user.id).count()
@@ -311,18 +313,19 @@ async def score(interaction: discord.Interaction):
         if next_role:
             embed.add_field(name="Next Rank", value=f"{next_role} ({points_needed} points needed)", inline=False)
         
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed, ephemeral=True)
     finally:
         session.close()
 
 @bot.tree.command(name="leaderboard", description="View the top performers")
 async def leaderboard(interaction: discord.Interaction):
+    await interaction.response.defer()
     session = get_session()
     try:
         top_users = session.query(User).order_by(User.monthly_score.desc()).limit(10).all()
         
         if not top_users:
-            await interaction.response.send_message("No one on the leaderboard yet!", ephemeral=True)
+            await interaction.followup.send("No one on the leaderboard yet!", ephemeral=True)
             return
         
         embed = discord.Embed(
@@ -340,22 +343,23 @@ async def leaderboard(interaction: discord.Interaction):
                 inline=False
             )
         
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
     finally:
         session.close()
 
 @bot.tree.command(name="rolesync", description="Sync your Discord role based on your score")
 async def rolesync(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     session = get_session()
     try:
         user = session.query(User).filter_by(discord_id=str(interaction.user.id)).first()
         
         if not user:
-            await interaction.response.send_message("You haven't joined Social Army yet!", ephemeral=True)
+            await interaction.followup.send("You haven't joined Social Army yet!", ephemeral=True)
             return
         
         await update_user_role(interaction.user, user.total_score)
-        await interaction.response.send_message(f"Your role has been synced! Current rank: **{user.current_role}**", ephemeral=True)
+        await interaction.followup.send(f"Your role has been synced! Current rank: **{user.current_role}**", ephemeral=True)
     finally:
         session.close()
 
