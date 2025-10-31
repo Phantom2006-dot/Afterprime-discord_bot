@@ -10,3 +10,15 @@ cryptography==41.0.7
 aiohttp==3.9.1
 pydantic==2.5.0
 python-multipart==0.0.6
+aiohttp
+cryptography
+discord.py
+fastapi
+psycopg2-binary
+pydantic
+python-dotenv
+python-multipart
+requests
+requests-oauthlib
+sqlalchemy
+uvicorn[standard]

@@ -19,9 +19,13 @@ args = "Discord Bot"
 name = "Discord Bot"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "console"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python start.py"
 
-[workflows.workflow.metadata]
-outputType = "console"
+[nix]
+channel = "stable-25_05"
+packages = ["cargo", "libiconv", "libxcrypt", "openssl", "pkg-config", "rustc"]
