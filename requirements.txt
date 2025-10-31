@@ -22,3 +22,15 @@ requests
 requests-oauthlib
 sqlalchemy
 uvicorn[standard]
+aiohttp
+cryptography
+discord.py
+fastapi
+psycopg2-binary
+pydantic
+python-dotenv
+python-multipart
+requests
+requests-oauthlib
+sqlalchemy
+uvicorn[standard]
