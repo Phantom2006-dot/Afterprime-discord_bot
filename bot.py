@@ -7,6 +7,8 @@ import config
 from database import get_session, User, Mission, Post, SocialAccount
 import aiohttp
 from encryption import encrypt_token, decrypt_token
+from publishing_service import publishing_service
+import os
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -17,13 +19,41 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 @bot.event
 async def on_ready():
     print(f'{bot.user} has connected to Discord!')
+    print(f'Multi-Platform Support: LinkedIn, Instagram/Meta, TikTok')
     try:
         synced = await bot.tree.sync()
         print(f'Synced {len(synced)} command(s)')
     except Exception as e:
         print(f'Failed to sync commands: {e}')
 
-@bot.tree.command(name="connect", description="Connect your social media accounts")
+class PlatformSelect(discord.ui.Select):
+    def __init__(self, user_id: str):
+        self.user_id = user_id
+        options = [
+            discord.SelectOption(label="LinkedIn", description="Connect your LinkedIn account", emoji="💼"),
+            discord.SelectOption(label="Instagram/Meta", description="Connect Instagram Business account", emoji="📸"),
+            discord.SelectOption(label="TikTok", description="Connect your TikTok account", emoji="🎵")
+        ]
+        super().__init__(placeholder="Choose a platform to connect...", options=options)
+    
+    async def callback(self, interaction: discord.Interaction):
+        platform = self.values[0].lower().replace("/", "").replace("instagram", "meta")
+        base_url = os.getenv('BASE_URL', config.BASE_URL)
+        oauth_url = f"{base_url}/oauth/{platform}/start?discord_id={self.user_id}"
+        
+        embed = discord.Embed(
+            title=f"🔗 Connect {self.values[0]}",
+            description=f"Click the button below to connect your {self.values[0]} account!",
+            color=discord.Color.blue()
+        )
+        
+        view = discord.ui.View()
+        button = discord.ui.Button(label=f"Connect {self.values[0]}", style=discord.ButtonStyle.link, url=oauth_url)
+        view.add_item(button)
+        
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+@bot.tree.command(name="connect", description="Connect your social media accounts (LinkedIn, Instagram, TikTok)")
 async def connect(interaction: discord.Interaction):
     session = get_session()
     try:
@@ -36,20 +66,26 @@ async def connect(interaction: discord.Interaction):
             session.add(user)
             session.commit()
         
-        oauth_url = f"http://localhost:8000/oauth/linkedin/start?discord_id={interaction.user.id}"
+        connected_accounts = session.query(SocialAccount).filter_by(user_id=user.id, is_active=True).all()
         
         embed = discord.Embed(
-            title="🔗 Connect Your LinkedIn Account",
-            description="Click the button below to connect your LinkedIn account to Social Army!",
+            title="🌐 Connect Social Media Accounts",
+            description="Choose a platform below to connect your account. You can connect multiple platforms!",
             color=discord.Color.blue()
         )
-        embed.add_field(name="Step 1", value="Click 'Connect LinkedIn' below", inline=False)
-        embed.add_field(name="Step 2", value="Authorize the app on LinkedIn", inline=False)
-        embed.add_field(name="Step 3", value="You'll be redirected back automatically", inline=False)
+        
+        if connected_accounts:
+            connected_list = "\n".join([f"✅ {acc.platform.title()}" for acc in connected_accounts])
+            embed.add_field(name="Connected Accounts", value=connected_list, inline=False)
+        
+        embed.add_field(
+            name="Supported Platforms", 
+            value="• LinkedIn (Personal/Company)\n• Instagram (Business accounts only)\n• TikTok", 
+            inline=False
+        )
         
         view = discord.ui.View()
-        button = discord.ui.Button(label="Connect LinkedIn", style=discord.ButtonStyle.link, url=oauth_url)
-        view.add_item(button)
+        view.add_item(PlatformSelect(str(interaction.user.id)))
         
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
     finally:
@@ -84,6 +120,40 @@ async def missions(interaction: discord.Interaction):
     finally:
         session.close()
 
+class PostPlatformSelect(discord.ui.Select):
+    def __init__(self, mission, user, available_platforms):
+        self.mission = mission
+        self.user = user
+        options = []
+        
+        platform_emojis = {'linkedin': '💼', 'meta': '📸', 'instagram': '📸', 'tiktok': '🎵'}
+        platform_names = {'linkedin': 'LinkedIn', 'meta': 'Instagram/Meta', 'instagram': 'Instagram/Meta', 'tiktok': 'TikTok'}
+        
+        for platform in available_platforms:
+            options.append(discord.SelectOption(
+                label=platform_names.get(platform, platform.title()),
+                description=f"Post to {platform_names.get(platform, platform.title())}",
+                value=platform,
+                emoji=platform_emojis.get(platform, '📱')
+            ))
+        
+        super().__init__(placeholder="Choose platform to post...", options=options)
+    
+    async def callback(self, interaction: discord.Interaction):
+        platform = self.values[0]
+        
+        embed = discord.Embed(
+            title="📝 Mission Preview",
+            description=self.mission.content,
+            color=discord.Color.blue()
+        )
+        embed.add_field(name="Mission", value=self.mission.title, inline=False)
+        embed.add_field(name="Platform", value=platform.title(), inline=True)
+        embed.set_footer(text=f"Click 'Confirm & Post' to publish to {platform.title()}")
+        
+        view = ConfirmPostView(self.mission, self.user, platform)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
 @bot.tree.command(name="post", description="Post a mission to your social media")
 @app_commands.describe(mission_id="The ID of the mission to post")
 async def post_mission(interaction: discord.Interaction, mission_id: int):
@@ -92,15 +162,6 @@ async def post_mission(interaction: discord.Interaction, mission_id: int):
         user = session.query(User).filter_by(discord_id=str(interaction.user.id)).first()
         if not user:
             await interaction.response.send_message("Please run `/connect` first to set up your account!", ephemeral=True)
-            return
-        
-        linkedin_account = session.query(SocialAccount).filter_by(
-            user_id=user.id, 
-            platform='linkedin'
-        ).first()
-        
-        if not linkedin_account:
-            await interaction.response.send_message("Please connect your LinkedIn account first using `/connect`!", ephemeral=True)
             return
         
         mission = session.query(Mission).filter_by(id=mission_id).first()
@@ -112,118 +173,114 @@ async def post_mission(interaction: discord.Interaction, mission_id: int):
             await interaction.response.send_message("This mission is no longer active!", ephemeral=True)
             return
         
-        existing_post = session.query(Post).filter_by(
+        connected_accounts = session.query(SocialAccount).filter_by(
             user_id=user.id,
-            mission_id=mission.id,
-            platform='linkedin'
-        ).first()
+            is_active=True
+        ).all()
         
-        if existing_post:
-            await interaction.response.send_message("You've already posted this mission!", ephemeral=True)
+        if not connected_accounts:
+            await interaction.response.send_message("Please connect at least one social account first using `/connect`!", ephemeral=True)
             return
         
-        embed = discord.Embed(
-            title="📝 Mission Preview",
-            description=mission.content,
-            color=discord.Color.blue()
-        )
-        embed.add_field(name="Mission", value=mission.title, inline=False)
-        embed.set_footer(text="Click 'Confirm & Post' to publish to LinkedIn")
+        mission_platforms = mission.platforms if mission.platforms else []
+        connected_platforms = [acc.platform for acc in connected_accounts]
         
-        view = ConfirmPostView(mission, user)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        available_platforms = [p for p in connected_platforms if not mission_platforms or p in mission_platforms]
+        
+        if not available_platforms:
+            await interaction.response.send_message(
+                f"You don't have any connected accounts for this mission's platforms: {', '.join(mission_platforms)}", 
+                ephemeral=True
+            )
+            return
+        
+        if len(available_platforms) == 1:
+            platform = available_platforms[0]
+            existing_post = session.query(Post).filter_by(
+                user_id=user.id,
+                mission_id=mission.id,
+                platform=platform
+            ).first()
+            
+            if existing_post and existing_post.status == 'published':
+                await interaction.response.send_message(f"You've already posted this mission to {platform.title()}!", ephemeral=True)
+                return
+            
+            embed = discord.Embed(
+                title="📝 Mission Preview",
+                description=mission.content,
+                color=discord.Color.blue()
+            )
+            embed.add_field(name="Mission", value=mission.title, inline=False)
+            embed.add_field(name="Platform", value=platform.title(), inline=True)
+            embed.set_footer(text=f"Click 'Confirm & Post' to publish to {platform.title()}")
+            
+            view = ConfirmPostView(mission, user, platform)
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        else:
+            embed = discord.Embed(
+                title="🌐 Choose Platform",
+                description=f"Select which platform to post **{mission.title}** to:",
+                color=discord.Color.blue()
+            )
+            
+            view = discord.ui.View()
+            view.add_item(PostPlatformSelect(mission, user, available_platforms))
+            
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+    
     except Exception as e:
         await interaction.response.send_message(f"Error: {str(e)}", ephemeral=True)
     finally:
         session.close()
 
 class ConfirmPostView(discord.ui.View):
-    def __init__(self, mission, user):
+    def __init__(self, mission, user, platform):
         super().__init__(timeout=300)
         self.mission = mission
         self.user = user
+        self.platform = platform
     
     @discord.ui.button(label="Confirm & Post", style=discord.ButtonStyle.green)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         
-        db_session = get_session()
         try:
-            linkedin_account = db_session.query(SocialAccount).filter_by(
-                user_id=self.user.id,
-                platform='linkedin'
-            ).first()
+            result = await publishing_service.publish_mission(
+                discord_id=str(interaction.user.id),
+                mission_id=self.mission.id,
+                platform=self.platform
+            )
             
-            access_token = decrypt_token(linkedin_account.access_token)
-            
-            async with aiohttp.ClientSession() as http_session:
-                async with http_session.post(
-                    'https://api.linkedin.com/v2/ugcPosts',
-                    headers={
-                        'Authorization': f'Bearer {access_token}',
-                        'Content-Type': 'application/json',
-                        'X-Restli-Protocol-Version': '2.0.0'
-                    },
-                    json={
-                        'author': f'urn:li:person:{linkedin_account.platform_user_id}',
-                        'lifecycleState': 'PUBLISHED',
-                        'specificContent': {
-                            'com.linkedin.ugc.ShareContent': {
-                                'shareCommentary': {
-                                    'text': self.mission.content
-                                },
-                                'shareMediaCategory': 'NONE'
-                            }
-                        },
-                        'visibility': {
-                            'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC'
-                        }
-                    }
-                ) as response:
-                    if response.status == 201:
-                        post_data = await response.json()
-                        post_id = post_data.get('id', 'unknown')
-                        
-                        was_on_time = (datetime.utcnow() - self.mission.start_date) <= timedelta(hours=24)
-                        points = config.SCORING['publish_success']
-                        if was_on_time:
-                            points += config.SCORING['on_time_bonus']
-                        
-                        new_post = Post(
-                            user_id=self.user.id,
-                            mission_id=self.mission.id,
-                            platform='linkedin',
-                            platform_post_id=post_id,
-                            was_on_time=was_on_time,
-                            points_earned=points
-                        )
-                        db_session.add(new_post)
-                        
-                        user = db_session.query(User).filter_by(id=self.user.id).first()
-                        user.total_score += points
-                        user.monthly_score += points
-                        
-                        await update_user_role(interaction.user, user.total_score)
-                        
-                        db_session.commit()
-                        
-                        success_embed = discord.Embed(
-                            title="✅ Mission Posted Successfully!",
-                            description=f"Your post has been published to LinkedIn!",
-                            color=discord.Color.green()
-                        )
-                        success_embed.add_field(name="Points Earned", value=f"+{points} points", inline=True)
-                        success_embed.add_field(name="Total Score", value=f"{user.total_score} points", inline=True)
-                        
-                        await interaction.followup.send(embed=success_embed, ephemeral=True)
-                    else:
-                        error_text = await response.text()
-                        await interaction.followup.send(f"Failed to post to LinkedIn. Error: {error_text}", ephemeral=True)
+            if result['status'] == 'success':
+                db_session = get_session()
+                try:
+                    user = db_session.query(User).filter_by(id=self.user.id).first()
+                    await update_user_role(interaction.user, user.total_score)
+                finally:
+                    db_session.close()
+                
+                success_embed = discord.Embed(
+                    title="✅ Mission Posted Successfully!",
+                    description=f"Your post has been published to {self.platform.title()}!",
+                    color=discord.Color.green()
+                )
+                success_embed.add_field(name="Points Earned", value=f"+{result['points_earned']} points", inline=True)
+                
+                if result.get('post_url'):
+                    success_embed.add_field(name="View Post", value=f"[Click here]({result['post_url']})", inline=True)
+                
+                await interaction.followup.send(embed=success_embed, ephemeral=True)
+            else:
+                error_embed = discord.Embed(
+                    title="❌ Posting Failed",
+                    description=result.get('message', 'Unknown error occurred'),
+                    color=discord.Color.red()
+                )
+                await interaction.followup.send(embed=error_embed, ephemeral=True)
         
         except Exception as e:
-            await interaction.followup.send(f"Error posting to LinkedIn: {str(e)}", ephemeral=True)
-        finally:
-            db_session.close()
+            await interaction.followup.send(f"Error: {str(e)}", ephemeral=True)
     
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.red)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
