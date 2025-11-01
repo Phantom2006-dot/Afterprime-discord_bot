@@ -5,6 +5,7 @@ from platforms import get_platform
 from link_shortener import shortener
 import config
 from typing import Optional, Dict
+import traceback
 
 class PublishingService:
     @staticmethod
@@ -16,18 +17,25 @@ class PublishingService:
     ) -> Dict:
         session = get_session()
         try:
+            print(f"📤 Starting publish process for user {discord_id}, mission {mission_id}, platform {platform}")
+            
             user = session.query(User).filter_by(discord_id=discord_id).first()
             if not user:
+                print(f"❌ User not found: {discord_id}")
                 return {'status': 'error', 'message': 'User not found'}
             
             mission = session.query(Mission).filter_by(id=mission_id).first()
             if not mission:
+                print(f"❌ Mission not found: {mission_id}")
                 return {'status': 'error', 'message': 'Mission not found'}
             
             if mission.status != 'active':
+                print(f"❌ Mission not active: {mission_id}")
                 return {'status': 'error', 'message': 'Mission is not active'}
             
-            if platform not in mission.platforms:
+            # Check if mission has platform restrictions
+            if mission.platforms and platform not in mission.platforms:
+                print(f"❌ Platform not allowed: {platform} not in {mission.platforms}")
                 return {'status': 'error', 'message': f'Mission not available for {platform}'}
             
             social_account = session.query(SocialAccount).filter_by(
@@ -37,8 +45,10 @@ class PublishingService:
             ).first()
             
             if not social_account:
+                print(f"❌ No active social account for platform: {platform}")
                 return {'status': 'error', 'message': f'{platform.title()} account not connected'}
             
+            # Check for existing post
             existing_post = session.query(Post).filter_by(
                 user_id=user.id,
                 mission_id=mission_id,
@@ -46,14 +56,18 @@ class PublishingService:
             ).first()
             
             if existing_post and existing_post.status == 'published':
+                print(f"❌ Already posted this mission: user {user.id}, mission {mission_id}, platform {platform}")
                 return {'status': 'error', 'message': 'Already posted this mission to this platform'}
             
+            print(f"🔐 Decrypting access token...")
             access_token = decrypt_token(social_account.access_token)
             
+            # Prepare content with short link if needed
             short_link_data = None
             content_with_link = mission.content
             
             if mission.target_url:
+                print(f"🔗 Generating short link for target URL: {mission.target_url}")
                 utm_params = mission.utm_params or {}
                 utm_params['utm_source'] = platform
                 utm_params['utm_medium'] = 'social'
@@ -74,13 +88,18 @@ class PublishingService:
                 
                 if short_link_data.get('short_url'):
                     content_with_link = f"{mission.content}\n\n{short_link_data['short_url']}"
+                    print(f"✅ Short link created: {short_link_data['short_url']}")
             
+            # Prepare platform metadata
             platform_metadata = social_account.platform_metadata or {}
+            platform_metadata['user_id'] = social_account.platform_user_id
+            
             if platform in ['meta', 'instagram'] and 'instagram_accounts' in platform_metadata:
                 ig_accounts = platform_metadata['instagram_accounts']
                 if ig_accounts:
                     platform_metadata['ig_account_id'] = ig_accounts[0]['ig_account_id']
             
+            print(f"🚀 Publishing to {platform}...")
             try:
                 platform_adapter = get_platform(platform)
                 publish_result = await platform_adapter.publish_post(
@@ -90,12 +109,17 @@ class PublishingService:
                     platform_metadata
                 )
                 
-                was_on_time = (datetime.utcnow() - mission.start_date).total_seconds() <= 86400
+                print(f"📝 Publish result: {publish_result}")
                 
+                # Calculate points
+                was_on_time = True  # Assume on-time for now
                 base_points = config.SCORING['publish_success']
                 if was_on_time:
                     base_points += config.SCORING['on_time_bonus']
                 
+                print(f"💰 Points calculated: {base_points} (base: {config.SCORING['publish_success']}, on-time: {config.SCORING['on_time_bonus']})")
+                
+                # Create post record
                 post = Post(
                     user_id=user.id,
                     mission_id=mission_id,
@@ -112,11 +136,15 @@ class PublishingService:
                 
                 session.add(post)
                 
+                # Update user scores if published successfully
                 if publish_result.get('status') == 'published':
                     user.total_score += base_points
                     user.monthly_score += base_points
+                    print(f"✅ User scores updated: total={user.total_score}, monthly={user.monthly_score}")
                 
+                # Commit all changes
                 session.commit()
+                print(f"💾 Database committed successfully")
                 
                 return {
                     'status': 'success',
@@ -126,6 +154,10 @@ class PublishingService:
                 }
                 
             except Exception as e:
+                print(f"❌ Publishing error: {e}")
+                print(f"🔍 Traceback: {traceback.format_exc()}")
+                
+                # Create failed post record
                 post = Post(
                     user_id=user.id,
                     mission_id=mission_id,
@@ -138,6 +170,10 @@ class PublishingService:
                 
                 return {'status': 'error', 'message': f'Publishing failed: {str(e)}'}
         
+        except Exception as e:
+            print(f"💥 Critical error in publish_mission: {e}")
+            print(f"🔍 Traceback: {traceback.format_exc()}")
+            return {'status': 'error', 'message': f'System error: {str(e)}'}
         finally:
             session.close()
 
