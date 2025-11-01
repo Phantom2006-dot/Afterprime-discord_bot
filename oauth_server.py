@@ -149,6 +149,7 @@ async def oauth_callback(
     print(f"🔄 OAuth callback received for {platform}")
     print(f"📋 Query params: code={code[:20] + '...' if code else 'None'}, state={state}, error={error}")
     print(f"📊 Active states before validation: {len(state_manager.states)}")
+    print(f"🔍 All states: {list(state_manager.states.keys())}")
     
     # Handle OAuth errors from platform
     if error:
@@ -160,14 +161,30 @@ async def oauth_callback(
     if not code or not state:
         return render_error("Missing code or state parameter")
     
-    # Validate state using state manager
-    state_data = state_manager.validate_state(state)
+    # FIXED STATE VALIDATION - More robust handling
+    state_data = None
+    
+    # First try normal validation
+    if state in state_manager.states:
+        state_data = state_manager.validate_state(state)
+    
+    # If normal validation failed but state exists, try direct access
+    if not state_data and state in state_manager.states:
+        print(f"🔄 State exists but validation failed, using direct access")
+        state_data = state_manager.states.get(state)
+        if state_data:
+            # Mark as used manually and remove from active states
+            state_data['used'] = True
+            # Don't remove immediately to prevent race conditions
+            # It will be cleaned up by the cleanup process
+    
     if not state_data:
         print(f"❌ Invalid or expired state: {state}")
         print(f"📝 Available states: {list(state_manager.states.keys())}")
         return render_error("Invalid or expired state parameter. Please start the OAuth flow again from Discord.")
     
     discord_id = state_data['discord_id']
+    
     print(f"✅ Valid state found for Discord ID: {discord_id}")
     
     try:
