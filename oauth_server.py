@@ -171,6 +171,9 @@ async def oauth_callback(
             encrypted_access_token = encrypt_token(access_token)
             encrypted_refresh_token = encrypt_token(refresh_token) if refresh_token else None
             
+            # Calculate token expiry
+            token_expiry = datetime.utcnow() + timedelta(seconds=expires_in)
+            
             # Find existing social account or create new
             social_account = session.query(SocialAccount).filter_by(
                 user_id=user.id,
@@ -181,12 +184,13 @@ async def oauth_callback(
                 print(f"📝 Updating existing social account")
                 social_account.access_token = encrypted_access_token
                 social_account.refresh_token = encrypted_refresh_token
-                social_account.token_expiry = datetime.utcnow() + timedelta(seconds=expires_in)
+                social_account.token_expiry = token_expiry
                 social_account.scopes = scopes
                 social_account.profile_data = profile_data
                 social_account.platform_metadata = platform_metadata
                 social_account.is_active = True
-                social_account.updated_at = datetime.utcnow()
+                # Note: Only update if the field exists in your model
+                # social_account.updated_at = datetime.utcnow()
             else:
                 print(f"🆕 Creating new social account")
                 social_account = SocialAccount(
@@ -195,13 +199,11 @@ async def oauth_callback(
                     platform_user_id=platform_user_id,
                     access_token=encrypted_access_token,
                     refresh_token=encrypted_refresh_token,
-                    token_expiry=datetime.utcnow() + timedelta(seconds=expires_in),
+                    token_expiry=token_expiry,
                     scopes=scopes,
                     profile_data=profile_data,
                     platform_metadata=platform_metadata,
-                    is_active=True,
-                    created_at=datetime.utcnow(),
-                    updated_at=datetime.utcnow()
+                    is_active=True
                 )
                 session.add(social_account)
             
@@ -213,6 +215,7 @@ async def oauth_callback(
         except Exception as db_error:
             session.rollback()
             print(f"❌ Database error: {db_error}")
+            print(f"🔍 Full traceback: {traceback.format_exc()}")
             return render_error(f"Database error: {str(db_error)}")
         finally:
             session.close()
