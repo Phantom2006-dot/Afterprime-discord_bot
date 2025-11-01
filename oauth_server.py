@@ -8,11 +8,65 @@ from platforms import get_platform
 import uvicorn
 import asyncio
 import traceback
+import json
+import hashlib
 
 app = FastAPI(title="Social Army OAuth Server")
 
-# Store OAuth states temporarily (in production, use Redis)
-oauth_states = {}
+# Use database for state storage instead of memory
+class OAuthStateManager:
+    def __init__(self):
+        self.states = {}
+    
+    def create_state(self, discord_id: str, platform: str) -> str:
+        """Create and store a state parameter"""
+        timestamp = datetime.utcnow().timestamp()
+        state = f"{platform}_{discord_id}_{timestamp}"
+        
+        self.states[state] = {
+            'discord_id': discord_id,
+            'platform': platform,
+            'created_at': datetime.utcnow(),
+            'used': False
+        }
+        
+        # Clean up old states
+        self.cleanup()
+        
+        return state
+    
+    def validate_state(self, state: str) -> dict:
+        """Validate a state parameter and mark as used"""
+        if state not in self.states:
+            return None
+        
+        state_data = self.states[state]
+        
+        # Check if expired (1 hour)
+        if datetime.utcnow() - state_data['created_at'] > timedelta(hours=1):
+            del self.states[state]
+            return None
+        
+        # Check if already used
+        if state_data['used']:
+            return None
+        
+        # Mark as used and return data
+        state_data['used'] = True
+        return state_data
+    
+    def cleanup(self):
+        """Remove expired states"""
+        now = datetime.utcnow()
+        expired_states = [
+            state for state, data in self.states.items()
+            if now - data['created_at'] > timedelta(hours=1)
+        ]
+        for state in expired_states:
+            del self.states[state]
+
+# Create state manager instance
+state_manager = OAuthStateManager()
 
 @app.get("/")
 async def root():
@@ -20,7 +74,8 @@ async def root():
         "message": "Social Army OAuth Server Running - Multi-Platform Support",
         "status": "healthy",
         "base_url": config.BASE_URL,
-        "supported_platforms": ["linkedin", "meta", "tiktok"]
+        "supported_platforms": ["linkedin", "meta", "tiktok"],
+        "active_states": len(state_manager.states)
     }
 
 @app.get("/debug/encryption")
@@ -31,7 +86,8 @@ async def debug_encryption():
         return {
             "encryption_test": "passed" if test_result else "failed",
             "encryption_key_set": bool(getattr(config, "ENCRYPTION_KEY", None)),
-            "encryption_key_length": len(config.ENCRYPTION_KEY) if config.ENCRYPTION_KEY else 0
+            "encryption_key_length": len(config.ENCRYPTION_KEY) if config.ENCRYPTION_KEY else 0,
+            "active_states": len(state_manager.states)
         }
     except Exception as e:
         return {
@@ -39,6 +95,24 @@ async def debug_encryption():
             "error": str(e),
             "traceback": traceback.format_exc()
         }
+
+@app.get("/debug/states")
+async def debug_states():
+    """Debug endpoint to see current states"""
+    states_info = {}
+    for state, data in state_manager.states.items():
+        states_info[state] = {
+            'discord_id': data['discord_id'],
+            'platform': data['platform'],
+            'created_at': data['created_at'].isoformat(),
+            'age_seconds': (datetime.utcnow() - data['created_at']).total_seconds(),
+            'used': data['used']
+        }
+    
+    return {
+        "total_states": len(state_manager.states),
+        "states": states_info
+    }
 
 @app.get("/oauth/{platform}/start")
 async def oauth_start(platform: str, request: Request, discord_id: str = None):
@@ -51,20 +125,14 @@ async def oauth_start(platform: str, request: Request, discord_id: str = None):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     
-    # Create state with timestamp for expiration
-    state = f"{platform}_{discord_id}_{datetime.utcnow().timestamp()}"
-    oauth_states[state] = {
-        'discord_id': discord_id, 
-        'platform': platform,
-        'created_at': datetime.utcnow()
-    }
-    
-    # Clean up old states (older than 1 hour)
-    cleanup_old_states()
+    # Create and store state
+    state = state_manager.create_state(discord_id, platform)
     
     auth_url = platform_adapter.get_auth_url(state)
     print(f"🔗 Starting OAuth for {platform}, Discord ID: {discord_id}")
+    print(f"📝 Generated state: {state}")
     print(f"📍 Redirecting to: {auth_url}")
+    print(f"📊 Active states: {len(state_manager.states)}")
     
     return RedirectResponse(url=auth_url)
 
@@ -80,6 +148,7 @@ async def oauth_callback(
     """Handle OAuth callback from platform"""
     print(f"🔄 OAuth callback received for {platform}")
     print(f"📋 Query params: code={code[:20] + '...' if code else 'None'}, state={state}, error={error}")
+    print(f"📊 Active states before validation: {len(state_manager.states)}")
     
     # Handle OAuth errors from platform
     if error:
@@ -91,15 +160,14 @@ async def oauth_callback(
     if not code or not state:
         return render_error("Missing code or state parameter")
     
-    # Validate state
-    if state not in oauth_states:
-        print(f"❌ Invalid state: {state}")
-        print(f"📝 Available states: {list(oauth_states.keys())}")
-        return render_error("Invalid or expired state parameter. Please start the OAuth flow again.")
+    # Validate state using state manager
+    state_data = state_manager.validate_state(state)
+    if not state_data:
+        print(f"❌ Invalid or expired state: {state}")
+        print(f"📝 Available states: {list(state_manager.states.keys())}")
+        return render_error("Invalid or expired state parameter. Please start the OAuth flow again from Discord.")
     
-    state_data = oauth_states.pop(state)
     discord_id = state_data['discord_id']
-    
     print(f"✅ Valid state found for Discord ID: {discord_id}")
     
     try:
@@ -111,7 +179,7 @@ async def oauth_callback(
         print(f"🔄 Exchanging code for access token...")
         token_data = await platform_adapter.exchange_code_for_token(code)
         
-        print(f"📦 Token response: { {k: v for k, v in token_data.items() if 'token' in k.lower()} }")
+        print(f"📦 Token response keys: {list(token_data.keys())}")
         
         if 'access_token' not in token_data:
             error_detail = token_data.get('error_description') or token_data.get('error') or 'Unknown error'
@@ -189,8 +257,6 @@ async def oauth_callback(
                 social_account.profile_data = profile_data
                 social_account.platform_metadata = platform_metadata
                 social_account.is_active = True
-                # Note: Only update if the field exists in your model
-                # social_account.updated_at = datetime.utcnow()
             else:
                 print(f"🆕 Creating new social account")
                 social_account = SocialAccount(
@@ -224,18 +290,6 @@ async def oauth_callback(
         print(f"❌ OAuth processing error: {e}")
         print(f"🔍 Traceback: {traceback.format_exc()}")
         return render_error(f"OAuth processing error: {str(e)}")
-
-def cleanup_old_states():
-    """Clean up OAuth states older than 1 hour"""
-    now = datetime.utcnow()
-    expired_states = [
-        state for state, data in oauth_states.items()
-        if now - data['created_at'] > timedelta(hours=1)
-    ]
-    for state in expired_states:
-        del oauth_states[state]
-    if expired_states:
-        print(f"🧹 Cleaned up {len(expired_states)} expired OAuth states")
 
 def render_success(platform: str):
     platform_colors = {
