@@ -34,8 +34,9 @@ class PublishingService:
                 return {'status': 'error', 'message': 'Mission is not active'}
             
             # Check if mission has platform restrictions
-            if mission.platforms and platform not in mission.platforms:
-                print(f"❌ Platform not allowed: {platform} not in {mission.platforms}")
+            mission_platforms = mission.platforms or []
+            if mission_platforms and platform not in mission_platforms:
+                print(f"❌ Platform not allowed: {platform} not in {mission_platforms}")
                 return {'status': 'error', 'message': f'Mission not available for {platform}'}
             
             social_account = session.query(SocialAccount).filter_by(
@@ -55,9 +56,15 @@ class PublishingService:
                 platform=platform
             ).first()
             
-            if existing_post and existing_post.status == 'published':
-                print(f"❌ Already posted this mission: user {user.id}, mission {mission_id}, platform {platform}")
-                return {'status': 'error', 'message': 'Already posted this mission to this platform'}
+            if existing_post:
+                if existing_post.status == 'published':
+                    print(f"❌ Already posted this mission: user {user.id}, mission {mission_id}, platform {platform}")
+                    return {'status': 'error', 'message': 'Already posted this mission to this platform'}
+                else:
+                    # Remove failed post to allow retry
+                    session.delete(existing_post)
+                    session.commit()
+                    print(f"🗑️ Removed failed post for retry")
             
             print(f"🔐 Decrypting access token...")
             access_token = decrypt_token(social_account.access_token)
@@ -68,27 +75,31 @@ class PublishingService:
             
             if mission.target_url:
                 print(f"🔗 Generating short link for target URL: {mission.target_url}")
-                utm_params = mission.utm_params or {}
-                utm_params['utm_source'] = platform
-                utm_params['utm_medium'] = 'social'
-                utm_params['utm_campaign'] = f'mission_{mission_id}'
-                utm_params['user_id'] = str(user.id)
-                
-                from urllib.parse import urlencode, urlparse, urlunparse
-                url_parts = list(urlparse(mission.target_url))
-                query = dict(utm_param.split('=') for utm_param in url_parts[4].split('&') if utm_param) if url_parts[4] else {}
-                query.update(utm_params)
-                url_parts[4] = urlencode(query)
-                target_url_with_utm = urlunparse(url_parts)
-                
-                short_link_data = await shortener.create_short_link(
-                    target_url_with_utm,
-                    f"{mission.title} - {user.discord_username}"
-                )
-                
-                if short_link_data.get('short_url'):
-                    content_with_link = f"{mission.content}\n\n{short_link_data['short_url']}"
-                    print(f"✅ Short link created: {short_link_data['short_url']}")
+                try:
+                    utm_params = mission.utm_params or {}
+                    utm_params['utm_source'] = platform
+                    utm_params['utm_medium'] = 'social'
+                    utm_params['utm_campaign'] = f'mission_{mission_id}'
+                    utm_params['user_id'] = str(user.id)
+                    
+                    from urllib.parse import urlencode, urlparse, urlunparse
+                    url_parts = list(urlparse(mission.target_url))
+                    query = dict(utm_param.split('=') for utm_param in url_parts[4].split('&') if utm_param) if url_parts[4] else {}
+                    query.update(utm_params)
+                    url_parts[4] = urlencode(query)
+                    target_url_with_utm = urlunparse(url_parts)
+                    
+                    short_link_data = await shortener.create_short_link(
+                        target_url_with_utm,
+                        f"{mission.title} - {user.discord_username}"
+                    )
+                    
+                    if short_link_data.get('short_url'):
+                        content_with_link = f"{mission.content}\n\n{short_link_data['short_url']}"
+                        print(f"✅ Short link created: {short_link_data['short_url']}")
+                except Exception as e:
+                    print(f"⚠️ Short link creation failed: {e}")
+                    # Continue without short link
             
             # Prepare platform metadata
             platform_metadata = social_account.platform_metadata or {}
@@ -111,13 +122,16 @@ class PublishingService:
                 
                 print(f"📝 Publish result: {publish_result}")
                 
+                # Check if publishing was successful
+                is_published = publish_result.get('status') == 'published'
+                
                 # Calculate points
                 was_on_time = True  # Assume on-time for now
-                base_points = config.SCORING['publish_success']
-                if was_on_time:
+                base_points = config.SCORING['publish_success'] if is_published else 0
+                if was_on_time and is_published:
                     base_points += config.SCORING['on_time_bonus']
                 
-                print(f"💰 Points calculated: {base_points} (base: {config.SCORING['publish_success']}, on-time: {config.SCORING['on_time_bonus']})")
+                print(f"💰 Points calculated: {base_points} (published: {is_published})")
                 
                 # Create post record
                 post = Post(
@@ -128,29 +142,37 @@ class PublishingService:
                     post_url=publish_result.get('post_url'),
                     short_url=short_link_data.get('short_url') if short_link_data else None,
                     bitly_id=short_link_data.get('bitly_id') if short_link_data else None,
-                    status='published' if publish_result.get('status') == 'published' else 'failed',
+                    status='published' if is_published else 'failed',
                     was_on_time=was_on_time,
-                    points_earned=base_points if publish_result.get('status') == 'published' else 0,
-                    error_message=publish_result.get('error') if publish_result.get('status') == 'failed' else None
+                    points_earned=base_points,
+                    error_message=publish_result.get('error') if not is_published else None
                 )
                 
                 session.add(post)
                 
                 # Update user scores if published successfully
-                if publish_result.get('status') == 'published':
+                if is_published:
                     user.total_score += base_points
                     user.monthly_score += base_points
                     print(f"✅ User scores updated: total={user.total_score}, monthly={user.monthly_score}")
+                else:
+                    print(f"❌ Post failed, no points awarded")
                 
                 # Commit all changes
                 session.commit()
                 print(f"💾 Database committed successfully")
                 
+                # Verify the commit by refreshing the objects
+                session.refresh(user)
+                session.refresh(post)
+                print(f"🔍 After commit - User total_score: {user.total_score}, Post status: {post.status}")
+                
                 return {
-                    'status': 'success',
+                    'status': 'success' if is_published else 'error',
                     'post': post,
                     'points_earned': base_points,
-                    'post_url': publish_result.get('post_url')
+                    'post_url': publish_result.get('post_url'),
+                    'message': 'Post published successfully!' if is_published else f'Publishing failed: {publish_result.get("error", "Unknown error")}'
                 }
                 
             except Exception as e:
@@ -163,6 +185,7 @@ class PublishingService:
                     mission_id=mission_id,
                     platform=platform,
                     status='failed',
+                    points_earned=0,
                     error_message=str(e)
                 )
                 session.add(post)
