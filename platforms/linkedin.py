@@ -50,10 +50,52 @@ class LinkedInPlatform(BasePlatform):
                 return await resp.json()
     
     async def get_user_profile(self, access_token: str) -> Dict[str, Any]:
-        headers = {'Authorization': f'Bearer {access_token}'}
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
         async with aiohttp.ClientSession() as session:
+            # Get basic profile info
             async with session.get(f"{self.api_base}/me", headers=headers) as resp:
-                return await resp.json()
+                if resp.status == 200:
+                    profile_data = await resp.json()
+                    print(f"👤 LinkedIn Profile Data: {profile_data}")
+                    
+                    # Extract the proper user ID
+                    user_id = profile_data.get('id')
+                    if user_id:
+                        # Ensure it's a positive number (remove negative sign if present)
+                        user_id = str(abs(int(user_id)))
+                    
+                    return {
+                        'id': user_id,
+                        'firstName': profile_data.get('firstName', {}).get('localized', {}).get('en_US', ''),
+                        'lastName': profile_data.get('lastName', {}).get('localized', {}).get('en_US', ''),
+                        'profilePicture': profile_data.get('profilePicture', {}).get('displayImage~', {}).get('elements', [{}])[-1].get('identifiers', [{}])[0].get('identifier', ''),
+                        'vanityName': profile_data.get('vanityName', '')
+                    }
+                else:
+                    error_text = await resp.text()
+                    print(f"❌ LinkedIn profile error: {resp.status} - {error_text}")
+                    return {'id': None, 'error': f"HTTP {resp.status}: {error_text}"}
+    
+    async def get_user_email(self, access_token: str) -> str:
+        """Get user email address"""
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{self.api_base}/emailAddress?q=members&projection=(elements*(handle~))",
+                headers=headers
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    elements = data.get('elements', [])
+                    if elements:
+                        return elements[0].get('handle~', {}).get('emailAddress', '')
+                return ''
     
     async def publish_post(
         self, 
@@ -67,26 +109,35 @@ class LinkedInPlatform(BasePlatform):
         print(f"🖼️ Media URLs: {media_urls}")
         print(f"🔑 Access token present: {bool(access_token)}")
         
-        # For testing - SIMULATE SUCCESSFUL POST to bypass API issues
-        print("🎯 USING SIMULATED POST FOR TESTING - POINTS WILL BE AWARDED")
-        
         try:
-            # Try real API call first
+            # First, get the user profile to ensure we have a valid user ID
+            print("👤 Getting user profile for valid user ID...")
+            profile_data = await self.get_user_profile(access_token)
+            user_id = profile_data.get('id')
+            
+            if not user_id:
+                print("❌ Could not get valid user ID from LinkedIn profile")
+                return {
+                    'status': 'failed',
+                    'error': 'Could not retrieve valid user ID from LinkedIn',
+                    'profile_data': profile_data
+                }
+            
+            print(f"✅ Got valid user ID: {user_id}")
+            
             headers = {
                 'Authorization': f'Bearer {access_token}',
                 'Content-Type': 'application/json',
                 'X-Restli-Protocol-Version': '2.0.0'
             }
             
-            user_id = platform_metadata.get('user_id') if platform_metadata else None
-            if not user_id:
-                print("👤 Getting user profile for user_id...")
-                profile = await self.get_user_profile(access_token)
-                user_id = profile.get('id')
-                print(f"👤 User ID: {user_id}")
+            # Use the correct author format: "urn:li:person:{user_id}"
+            # For personal accounts, it should be "urn:li:person:123456789"
+            author_urn = f"urn:li:person:{user_id}"
+            print(f"👤 Using author URN: {author_urn}")
             
             post_data = {
-                'author': f'urn:li:person:{user_id}',
+                'author': author_urn,
                 'lifecycleState': 'PUBLISHED',
                 'specificContent': {
                     'com.linkedin.ugc.ShareContent': {
@@ -109,7 +160,7 @@ class LinkedInPlatform(BasePlatform):
             
             print(f"📤 Sending request to LinkedIn API...")
             print(f"🔗 URL: {self.api_base}/ugcPosts")
-            print(f"📦 Post data: {post_data}")
+            print(f"📦 Post data author: {post_data['author']}")
             
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -120,7 +171,6 @@ class LinkedInPlatform(BasePlatform):
                 ) as resp:
                     result_text = await resp.text()
                     print(f"🔗 LinkedIn API Response - Status: {resp.status}")
-                    print(f"🔗 Response headers: {dict(resp.headers)}")
                     print(f"🔗 Response body: {result_text}")
                     
                     try:
@@ -149,14 +199,25 @@ class LinkedInPlatform(BasePlatform):
                     success = resp.status == 201
                     print(f"✅ Publishing {'SUCCESS' if success else 'FAILED'}")
                     
-                    return {
-                        'post_id': post_id,
-                        'post_url': post_url,
-                        'status': 'published' if success else 'failed',
-                        'response_status': resp.status,
-                        'raw_response': result,
-                        'error': None if success else f"HTTP {resp.status}: {result_text}"
-                    }
+                    if success:
+                        return {
+                            'post_id': post_id,
+                            'post_url': post_url,
+                            'status': 'published',
+                            'response_status': resp.status,
+                            'raw_response': result,
+                            'error': None
+                        }
+                    else:
+                        error_msg = result.get('message', f"HTTP {resp.status}: {result_text}")
+                        return {
+                            'post_id': None,
+                            'post_url': None,
+                            'status': 'failed',
+                            'response_status': resp.status,
+                            'raw_response': result,
+                            'error': error_msg
+                        }
         
         except aiohttp.ClientError as e:
             print(f"❌ LinkedIn API connection error: {e}")
@@ -164,6 +225,7 @@ class LinkedInPlatform(BasePlatform):
             return self._simulate_successful_post(content)
         except Exception as e:
             print(f"❌ LinkedIn API unexpected error: {e}")
+            print(f"🔍 Traceback: {traceback.format_exc()}")
             # Fallback: Simulate successful post for testing
             return self._simulate_successful_post(content)
     
