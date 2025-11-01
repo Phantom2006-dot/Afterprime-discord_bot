@@ -3,6 +3,7 @@ from urllib.parse import urlencode
 from typing import Dict, Any, Optional
 from .base import BasePlatform
 import config
+import re
 
 class LinkedInPlatform(BasePlatform):
     def __init__(self):
@@ -100,10 +101,34 @@ class LinkedInPlatform(BasePlatform):
                 json=post_data
             ) as resp:
                 result = await resp.json()
+                print(f"🔗 LinkedIn API Response - Status: {resp.status}, Result: {result}")
+                
+                # Extract post ID from LinkedIn response
+                post_id = None
+                if resp.status == 201:
+                    # LinkedIn returns the post ID in the X-RestLi-Id header or in the response body
+                    post_id = resp.headers.get('X-RestLi-Id') or result.get('id')
+                    
+                    # If post_id is in format "urn:li:share:123456789", extract the numeric part
+                    if post_id and ':' in post_id:
+                        post_id_parts = post_id.split(':')
+                        if len(post_id_parts) >= 3:
+                            post_id = post_id_parts[-1]
+                
+                # Generate proper LinkedIn URL
+                post_url = None
+                if post_id:
+                    # LinkedIn post URLs typically look like: https://www.linkedin.com/feed/update/urn:li:share:123456789/
+                    # But the actual viewing URL is: https://www.linkedin.com/posts/username_postid-123456789/
+                    # For now, use the feed URL which should redirect to the actual post
+                    post_url = f"https://www.linkedin.com/feed/update/urn:li:share:{post_id}/"
+                
                 return {
-                    'post_id': result.get('id'),
-                    'post_url': f"https://www.linkedin.com/feed/update/{result.get('id')}",
-                    'status': 'published' if resp.status == 201 else 'failed'
+                    'post_id': post_id,
+                    'post_url': post_url,
+                    'status': 'published' if resp.status == 201 else 'failed',
+                    'response_status': resp.status,
+                    'raw_response': result
                 }
     
     async def get_post_metrics(self, access_token: str, post_id: str) -> Dict[str, Any]:
