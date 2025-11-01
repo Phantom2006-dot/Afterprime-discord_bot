@@ -124,8 +124,9 @@ class PublishingService:
                 
                 # Check if publishing was successful
                 is_published = publish_result.get('status') == 'published'
+                error_message = publish_result.get('error')
                 
-                # Calculate points
+                # Calculate points - AWARD POINTS EVEN FOR SIMULATED POSTS
                 was_on_time = True  # Assume on-time for now
                 base_points = config.SCORING['publish_success'] if is_published else 0
                 if was_on_time and is_published:
@@ -145,7 +146,7 @@ class PublishingService:
                     status='published' if is_published else 'failed',
                     was_on_time=was_on_time,
                     points_earned=base_points,
-                    error_message=publish_result.get('error') if not is_published else None
+                    error_message=error_message
                 )
                 
                 session.add(post)
@@ -156,7 +157,7 @@ class PublishingService:
                     user.monthly_score += base_points
                     print(f"✅ User scores updated: total={user.total_score}, monthly={user.monthly_score}")
                 else:
-                    print(f"❌ Post failed, no points awarded")
+                    print(f"❌ Post failed, no points awarded. Error: {error_message}")
                 
                 # Commit all changes
                 session.commit()
@@ -167,13 +168,19 @@ class PublishingService:
                 session.refresh(post)
                 print(f"🔍 After commit - User total_score: {user.total_score}, Post status: {post.status}")
                 
-                return {
-                    'status': 'success' if is_published else 'error',
-                    'post': post,
-                    'points_earned': base_points,
-                    'post_url': publish_result.get('post_url'),
-                    'message': 'Post published successfully!' if is_published else f'Publishing failed: {publish_result.get("error", "Unknown error")}'
-                }
+                if is_published:
+                    return {
+                        'status': 'success',
+                        'post': post,
+                        'points_earned': base_points,
+                        'post_url': publish_result.get('post_url'),
+                        'message': 'Post published successfully!'
+                    }
+                else:
+                    return {
+                        'status': 'error', 
+                        'message': f'Publishing failed: {error_message}'
+                    }
                 
             except Exception as e:
                 print(f"❌ Publishing error: {e}")
@@ -197,6 +204,138 @@ class PublishingService:
             print(f"💥 Critical error in publish_mission: {e}")
             print(f"🔍 Traceback: {traceback.format_exc()}")
             return {'status': 'error', 'message': f'System error: {str(e)}'}
+        finally:
+            session.close()
+
+    @staticmethod
+    async def get_user_posts(discord_id: str) -> list:
+        """Get all posts for a user"""
+        session = get_session()
+        try:
+            user = session.query(User).filter_by(discord_id=discord_id).first()
+            if not user:
+                return []
+            
+            posts = session.query(Post).filter_by(user_id=user.id).order_by(Post.posted_at.desc()).all()
+            return posts
+        finally:
+            session.close()
+
+    @staticmethod
+    async def get_user_score(discord_id: str) -> Dict:
+        """Get user score information"""
+        session = get_session()
+        try:
+            user = session.query(User).filter_by(discord_id=discord_id).first()
+            if not user:
+                return {'total_score': 0, 'monthly_score': 0, 'posts_count': 0}
+            
+            posts_count = session.query(Post).filter_by(user_id=user.id, status='published').count()
+            
+            return {
+                'total_score': user.total_score,
+                'monthly_score': user.monthly_score,
+                'posts_count': posts_count,
+                'current_role': user.current_role
+            }
+        finally:
+            session.close()
+
+    @staticmethod
+    async def update_post_metrics():
+        """Update metrics for all published posts"""
+        session = get_session()
+        try:
+            published_posts = session.query(Post).filter_by(status='published').all()
+            
+            for post in published_posts:
+                try:
+                    social_account = session.query(SocialAccount).filter_by(
+                        user_id=post.user_id,
+                        platform=post.platform,
+                        is_active=True
+                    ).first()
+                    
+                    if not social_account:
+                        continue
+                    
+                    access_token = decrypt_token(social_account.access_token)
+                    platform_adapter = get_platform(post.platform)
+                    
+                    metrics = await platform_adapter.get_post_metrics(
+                        access_token, 
+                        post.platform_post_id
+                    )
+                    
+                    # Create engagement snapshot
+                    snapshot = EngagementSnapshot(
+                        post_id=post.id,
+                        clicks=metrics.get('clicks', 0),
+                        reactions=metrics.get('reactions', 0),
+                        comments=metrics.get('comments', 0),
+                        shares=metrics.get('shares', 0),
+                        views=metrics.get('views', 0),
+                        platform_metrics=metrics
+                    )
+                    
+                    session.add(snapshot)
+                    
+                    # Update post metrics
+                    post.metrics = metrics
+                    post.last_metrics_update = datetime.utcnow()
+                    
+                    # Calculate additional points based on engagement
+                    additional_points = 0
+                    
+                    # Click-based points
+                    clicks = metrics.get('clicks', 0)
+                    additional_points += (clicks // 10) * config.SCORING['clicks_per_10']
+                    
+                    # Engagement tier points
+                    if post.platform == 'linkedin':
+                        reactions = metrics.get('reactions', 0)
+                        if reactions >= 100:
+                            additional_points += config.SCORING['linkedin_reactions_100']
+                        elif reactions >= 30:
+                            additional_points += config.SCORING['linkedin_reactions_30']
+                        elif reactions >= 10:
+                            additional_points += config.SCORING['linkedin_reactions_10']
+                    
+                    elif post.platform in ['meta', 'instagram']:
+                        views = metrics.get('views', 0)
+                        if views >= 2000:
+                            additional_points += config.SCORING['instagram_views_2000']
+                        elif views >= 500:
+                            additional_points += config.SCORING['instagram_views_500']
+                        elif views >= 100:
+                            additional_points += config.SCORING['instagram_views_100']
+                    
+                    elif post.platform == 'tiktok':
+                        views = metrics.get('views', 0)
+                        if views >= 2000:
+                            additional_points += config.SCORING['tiktok_views_2000']
+                        elif views >= 500:
+                            additional_points += config.SCORING['tiktok_views_500']
+                        elif views >= 100:
+                            additional_points += config.SCORING['tiktok_views_100']
+                    
+                    # Update points if any additional points were earned
+                    if additional_points > 0:
+                        post.points_earned += additional_points
+                        
+                        user = session.query(User).filter_by(id=post.user_id).first()
+                        if user:
+                            user.total_score += additional_points
+                            user.monthly_score += additional_points
+                    
+                    session.commit()
+                    print(f"✅ Updated metrics for post {post.id}: +{additional_points} points")
+                    
+                except Exception as e:
+                    print(f"❌ Error updating metrics for post {post.id}: {e}")
+                    session.rollback()
+                    continue
+                    
         finally:
             session.close()
 
