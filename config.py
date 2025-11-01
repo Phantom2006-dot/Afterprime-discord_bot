@@ -61,8 +61,14 @@ SCORING = {
 }
 
 PLATFORM_SCOPES = {
-    'linkedin': ['w_member_social', 'r_liteprofile', 'r_basicprofile'],
-    'meta': ['pages_manage_posts', 'pages_read_engagement', 'pages_show_list', 'instagram_basic', 'instagram_content_publish'],
+    'linkedin': ['openid', 'profile', 'email', 'w_member_social'],
+    'meta': [
+        'pages_manage_posts',
+        'pages_read_engagement',
+        'pages_show_list',
+        'instagram_basic',
+        'instagram_content_publish'
+    ],
     'tiktok': ['video.upload', 'user.info.basic']
 }
 
