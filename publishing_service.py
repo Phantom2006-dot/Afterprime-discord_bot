@@ -125,14 +125,20 @@ class PublishingService:
                 # Check if publishing was successful
                 is_published = publish_result.get('status') == 'published'
                 error_message = publish_result.get('error')
+                note = publish_result.get('note', '')
                 
-                # Calculate points - AWARD POINTS EVEN FOR SIMULATED POSTS
-                was_on_time = True  # Assume on-time for now
+                # Calculate points - different logic for real vs simulated posts
+                was_on_time = True
                 base_points = config.SCORING['publish_success'] if is_published else 0
-                if was_on_time and is_published:
-                    base_points += config.SCORING['on_time_bonus']
                 
-                print(f"💰 Points calculated: {base_points} (published: {is_published})")
+                # Only award on-time bonus for REAL posts (not simulations)
+                if was_on_time and is_published and note != 'explicit_simulation_no_linkedin_post':
+                    base_points += config.SCORING['on_time_bonus']
+                    print(f"✅ Awarding on-time bonus for real post")
+                elif was_on_time and is_published:
+                    print(f"⚠️ No on-time bonus for simulated post")
+                
+                print(f"💰 Points calculated: {base_points} (published: {is_published}, note: {note})")
                 
                 # Create post record
                 post = Post(
@@ -169,13 +175,21 @@ class PublishingService:
                 print(f"🔍 After commit - User total_score: {user.total_score}, Post status: {post.status}")
                 
                 if is_published:
-                    return {
+                    response_data = {
                         'status': 'success',
                         'post': post,
                         'points_earned': base_points,
                         'post_url': publish_result.get('post_url'),
                         'message': 'Post published successfully!'
                     }
+                    
+                    # Add warning if it's a simulated post
+                    if note == 'explicit_simulation_no_linkedin_post':
+                        response_data['message'] = 'Post recorded (simulation mode)'
+                        response_data['warning'] = 'This was a simulated post for testing. No actual LinkedIn post was created.'
+                        response_data['post_url'] = None  # Remove URL for simulated posts
+                    
+                    return response_data
                 else:
                     return {
                         'status': 'error', 
