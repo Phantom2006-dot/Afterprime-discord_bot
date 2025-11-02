@@ -127,16 +127,12 @@ class PublishingService:
                 error_message = publish_result.get('error')
                 note = publish_result.get('note', '')
                 
-                # Calculate points - different logic for real vs simulated posts
-                was_on_time = True
-                base_points = config.SCORING['publish_success'] if is_published else 0
-                
-                # Only award on-time bonus for REAL posts (not simulations)
-                if was_on_time and is_published and note != 'explicit_simulation_no_linkedin_post':
-                    base_points += config.SCORING['on_time_bonus']
-                    print(f"✅ Awarding on-time bonus for real post")
-                elif was_on_time and is_published:
-                    print(f"⚠️ No on-time bonus for simulated post")
+               # In the points calculation section, ensure this logic:
+base_points = config.SCORING['publish_success'] if is_published else 0
+
+# Award on-time bonus for ALL successful posts (real or simulated)
+if was_on_time and is_published:
+    base_points += config.SCORING['on_time_bonus']
                 
                 print(f"💰 Points calculated: {base_points} (published: {is_published}, note: {note})")
                 
