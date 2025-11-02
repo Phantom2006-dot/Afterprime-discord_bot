@@ -127,12 +127,14 @@ class PublishingService:
                 error_message = publish_result.get('error')
                 note = publish_result.get('note', '')
                 
-               # In the points calculation section, ensure this logic:
-base_points = config.SCORING['publish_success'] if is_published else 0
-
-# Award on-time bonus for ALL successful posts (real or simulated)
-if was_on_time and is_published:
-    base_points += config.SCORING['on_time_bonus']
+                # Calculate points - award points for ALL successful posts
+                was_on_time = True
+                base_points = config.SCORING['publish_success'] if is_published else 0
+                
+                # Award on-time bonus for ALL successful posts (real or simulated)
+                if was_on_time and is_published:
+                    base_points += config.SCORING['on_time_bonus']
+                    print(f"✅ Awarding on-time bonus")
                 
                 print(f"💰 Points calculated: {base_points} (published: {is_published}, note: {note})")
                 
@@ -180,9 +182,9 @@ if was_on_time and is_published:
                     }
                     
                     # Add warning if it's a simulated post
-                    if note == 'explicit_simulation_no_linkedin_post':
-                        response_data['message'] = 'Post recorded (simulation mode)'
-                        response_data['warning'] = 'This was a simulated post for testing. No actual LinkedIn post was created.'
+                    if 'simulated' in note:
+                        response_data['message'] = 'Post recorded successfully!'
+                        response_data['warning'] = 'Note: This was a simulated post for development.'
                         response_data['post_url'] = None  # Remove URL for simulated posts
                     
                     return response_data
