@@ -437,6 +437,38 @@ async def rolesync(interaction: discord.Interaction):
         except:
             pass
 
+# NEW COMMAND ADDED HERE
+@bot.tree.command(name="reconnect", description="Reconnect your social media accounts if posting fails")
+@app_commands.describe(platform="The platform to reconnect (linkedin, meta, tiktok)")
+async def reconnect(interaction: discord.Interaction, platform: str):
+    """Reconnect social media account if token is revoked"""
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    
+    session = get_session()
+    try:
+        user = session.query(User).filter_by(discord_id=str(interaction.user.id)).first()
+        if not user:
+            await interaction.followup.send("Please run `/connect` first to set up your account!", ephemeral=True)
+            return
+        
+        # Mark the social account as inactive to force reconnection
+        social_account = session.query(SocialAccount).filter_by(
+            user_id=user.id,
+            platform=platform.lower()
+        ).first()
+        
+        if social_account:
+            social_account.is_active = False
+            session.commit()
+            await interaction.followup.send(f"✅ {platform.title()} account marked for reconnection. Please use `/connect` to reconnect.", ephemeral=True)
+        else:
+            await interaction.followup.send(f"No {platform.title()} account found. Please use `/connect` to connect.", ephemeral=True)
+            
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error: {str(e)}", ephemeral=True)
+    finally:
+        session.close()
+
 @bot.tree.command(name="mission", description="[ADMIN] Manage missions")
 @app_commands.describe(action="Action to perform (new/close)", mission_id="Mission ID (for close)")
 async def mission_admin(interaction: discord.Interaction, action: str, mission_id: int = None):
