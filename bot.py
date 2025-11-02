@@ -437,7 +437,6 @@ async def rolesync(interaction: discord.Interaction):
         except:
             pass
 
-# NEW COMMAND ADDED HERE
 @bot.tree.command(name="reconnect", description="Reconnect your social media accounts if posting fails")
 @app_commands.describe(platform="The platform to reconnect (linkedin, meta, tiktok)")
 async def reconnect(interaction: discord.Interaction, platform: str):
@@ -469,21 +468,33 @@ async def reconnect(interaction: discord.Interaction, platform: str):
     finally:
         session.close()
 
+# FIXED MISSION COMMAND
 @bot.tree.command(name="mission", description="[ADMIN] Manage missions")
-@app_commands.describe(action="Action to perform (new/close)", mission_id="Mission ID (for close)")
+@app_commands.choices(action=[
+    app_commands.Choice(name="new", value="new"),
+    app_commands.Choice(name="close", value="close")
+])
+@app_commands.describe(
+    action="Action to perform",
+    mission_id="Mission ID (required for close)"
+)
 async def mission_admin(interaction: discord.Interaction, action: str, mission_id: int = None):
     """Admin mission management - IMMEDIATE RESPONSE"""
     try:
+        # Check admin permissions
         if not any(role.name == config.ADMIN_ROLE_NAME for role in interaction.user.roles):
-            await interaction.response.send_message("You don't have permission to use this command!", ephemeral=True)
+            await interaction.response.send_message("❌ You don't have permission to use this command!", ephemeral=True)
             return
         
         if action == "new":
+            # Create new mission using modal
             modal = MissionModal()
             await interaction.response.send_modal(modal)
+            
         elif action == "close":
-            if not mission_id:
-                await interaction.response.send_message("Please provide a mission_id to close!", ephemeral=True)
+            # Close existing mission
+            if mission_id is None:
+                await interaction.response.send_message("❌ Please provide a mission_id to close! Example: `/mission close mission_id:123`", ephemeral=True)
                 return
             
             await interaction.response.defer(ephemeral=True, thinking=True)
@@ -492,19 +503,50 @@ async def mission_admin(interaction: discord.Interaction, action: str, mission_i
             try:
                 mission = session.query(Mission).filter_by(id=mission_id).first()
                 if mission:
+                    # Store mission title for confirmation message
+                    mission_title = mission.title
                     mission.status = 'closed'
                     session.commit()
-                    await interaction.followup.send(f"Mission #{mission_id} has been closed!", ephemeral=True)
+                    
+                    embed = discord.Embed(
+                        title="✅ Mission Closed",
+                        description=f"**Mission #{mission_id}: {mission_title}** has been closed!",
+                        color=discord.Color.orange()
+                    )
+                    embed.add_field(name="Status", value="🔒 Closed", inline=True)
+                    embed.add_field(name="Closed by", value=interaction.user.display_name, inline=True)
+                    
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                    
+                    # Optional: Notify in mission channel
+                    if config.MISSION_CHANNEL_ID:
+                        try:
+                            channel = bot.get_channel(config.MISSION_CHANNEL_ID)
+                            if channel:
+                                notify_embed = discord.Embed(
+                                    title="🔒 Mission Closed",
+                                    description=f"**{mission_title}** (Mission #{mission_id}) has been closed.",
+                                    color=discord.Color.orange()
+                                )
+                                notify_embed.set_footer(text=f"Closed by {interaction.user.display_name}")
+                                await channel.send(embed=notify_embed)
+                        except Exception as e:
+                            print(f"Failed to send close notification: {e}")
+                    
                 else:
-                    await interaction.followup.send(f"Mission #{mission_id} not found!", ephemeral=True)
+                    await interaction.followup.send(f"❌ Mission #{mission_id} not found!", ephemeral=True)
+                    
             except Exception as e:
-                await interaction.followup.send(f"❌ Error closing mission: {str(e)}", ephemeral=True)
+                error_msg = f"❌ Error closing mission: {str(e)}"
+                print(f"Mission close error: {traceback.format_exc()}")
+                await interaction.followup.send(error_msg, ephemeral=True)
             finally:
                 session.close()
         else:
-            await interaction.response.send_message("Invalid action! Use 'new' or 'close'", ephemeral=True)
+            await interaction.response.send_message("❌ Invalid action! Use 'new' or 'close'", ephemeral=True)
             
     except Exception as e:
+        print(f"Mission command error: {traceback.format_exc()}")
         try:
             await interaction.response.send_message("❌ Command failed. Please try again.", ephemeral=True)
         except:
