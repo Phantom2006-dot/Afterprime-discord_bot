@@ -23,7 +23,7 @@ class LinkedInPlatform(BasePlatform):
             'client_id': self.client_id,
             'redirect_uri': self.redirect_uri,
             'state': state,
-            'scope': ' '.join(self.scopes)
+            'scope': ' '.join(self.scopes'
         }
         return f"{self.auth_url}?{urlencode(params)}"
     
@@ -67,7 +67,7 @@ class LinkedInPlatform(BasePlatform):
                 ) as resp:
                     if resp.status == 200:
                         userinfo_data = await resp.json()
-                        print(f"✅ Userinfo data received")
+                        print(f"✅ Userinfo data: {userinfo_data}")
                         
                         # Extract user ID from the 'sub' field
                         user_id = userinfo_data.get('sub')
@@ -97,18 +97,6 @@ class LinkedInPlatform(BasePlatform):
             print(f"❌ Profile retrieval error: {e}")
             return {'id': None, 'error': str(e)}
     
-    async def get_user_profile_url(self, access_token: str) -> str:
-        """Get the user's LinkedIn profile URL"""
-        try:
-            profile_data = await self.get_user_profile(access_token)
-            if profile_data.get('id'):
-                # For LinkedIn, we can construct a profile URL with the user ID
-                # However, a better approach is to redirect to their feed where they can see their posts
-                return "https://www.linkedin.com/feed/"
-            return "https://www.linkedin.com/feed/"
-        except:
-            return "https://www.linkedin.com/feed/"
-    
     async def publish_post(
         self, 
         access_token: str, 
@@ -117,28 +105,23 @@ class LinkedInPlatform(BasePlatform):
         platform_metadata: Optional[Dict] = None
     ) -> Dict[str, Any]:
         print(f"🔗 Attempting REAL publish to LinkedIn...")
-        print(f"📝 Content: {content[:100]}...")
+        print(f"📝 Content length: {len(content)}")
+        
+        # First, let's verify the access token is valid
+        print("🔐 Verifying access token...")
+        profile_data = await self.get_user_profile(access_token)
+        if not profile_data.get('id'):
+            print(f"❌ Access token invalid or insufficient permissions")
+            return {
+                'status': 'failed',
+                'error': 'Invalid access token or insufficient LinkedIn permissions',
+                'profile_data': profile_data
+            }
+        
+        user_id = profile_data['id']
+        print(f"✅ Access token valid. User ID: {user_id}")
         
         try:
-            # Get user profile to get the correct user ID
-            print("👤 Getting user profile...")
-            profile_data = await self.get_user_profile(access_token)
-            user_id = profile_data.get('id')
-            
-            if not user_id:
-                print("❌ Could not get valid user ID")
-                # Try to get user ID from platform metadata as fallback
-                user_id = platform_metadata.get('user_id') if platform_metadata else None
-                if user_id:
-                    # Clean the user ID
-                    user_id = re.sub(r'[^0-9]', '', str(user_id))
-                    print(f"🔄 Using user ID from metadata: {user_id}")
-                else:
-                    print("❌ No user ID available, using simulation")
-                    return await self._simulate_successful_post(access_token, content)
-            
-            print(f"✅ Using user ID: {user_id}")
-            
             headers = {
                 'Authorization': f'Bearer {access_token}',
                 'Content-Type': 'application/json',
@@ -149,16 +132,16 @@ class LinkedInPlatform(BasePlatform):
             author_urn = f"urn:li:person:{user_id}"
             print(f"👤 Using author URN: {author_urn}")
             
-            # Prepare post data
+            # Prepare post data - SIMPLIFIED for testing
             post_data = {
                 "author": author_urn,
                 "lifecycleState": "PUBLISHED", 
                 "specificContent": {
                     "com.linkedin.ugc.ShareContent": {
                         "shareCommentary": {
-                            "text": content
+                            "text": content[:1300]  # LinkedIn has character limits
                         },
-                        "shareMediaCategory": "NONE"  # Simple text post for now
+                        "shareMediaCategory": "NONE"
                     }
                 },
                 "visibility": {
@@ -166,7 +149,9 @@ class LinkedInPlatform(BasePlatform):
                 }
             }
             
+            print(f"📦 Post data prepared")
             print(f"📤 Sending REAL request to LinkedIn API...")
+            print(f"🔗 Endpoint: {self.api_base}/ugcPosts")
             
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -177,95 +162,131 @@ class LinkedInPlatform(BasePlatform):
                 ) as resp:
                     result_text = await resp.text()
                     print(f"🔗 LinkedIn API Response - Status: {resp.status}")
+                    print(f"🔗 Response headers: {dict(resp.headers)}")
+                    print(f"🔗 Response body: {result_text}")
+                    
+                    try:
+                        result_json = await resp.json()
+                        print(f"🔗 Parsed JSON: {result_json}")
+                    except:
+                        result_json = {"raw_text": result_text}
                     
                     if resp.status == 201:
                         # Success! Extract post ID from headers
                         post_id_header = resp.headers.get('X-RestLi-Id', '')
-                        print(f"🔗 Post ID Header: {post_id_header}")
+                        print(f"✅ Post ID Header: {post_id_header}")
                         
-                        # Extract the actual post ID
-                        post_id = None
                         if post_id_header:
-                            # The header format is usually "urn:li:share:123456789"
-                            if 'urn:li:share:' in post_id_header:
-                                post_id = post_id_header.replace('urn:li:share:', '')
-                            else:
-                                # Try to extract the numeric part
-                                post_id_match = re.search(r'(\d+)', post_id_header)
-                                if post_id_match:
-                                    post_id = post_id_match.group(1)
-                        
-                        # If we couldn't extract a proper post ID, generate one
-                        if not post_id:
-                            post_id = str(random.randint(1000000000, 9999999999))
-                            print(f"🔄 Generated fallback post ID: {post_id}")
-                        
-                        # CORRECT LinkedIn post URL format
-                        post_url = f"https://www.linkedin.com/feed/update/{post_id_header}/" if post_id_header else f"https://www.linkedin.com/feed/update/urn:li:share:{post_id}/"
-                        
-                        print(f"✅ REAL LinkedIn post successful!")
-                        print(f"✅ Post ID: {post_id}")
-                        print(f"✅ Post URL: {post_url}")
-                        
-                        return {
-                            'post_id': post_id,
-                            'post_url': post_url,
-                            'status': 'published',
-                            'response_status': resp.status,
-                            'error': None,
-                            'note': 'real_linkedin_post'
-                        }
+                            # The correct URL format for LinkedIn posts
+                            post_url = f"https://www.linkedin.com/feed/update/{post_id_header}/"
+                            
+                            print(f"✅ REAL LinkedIn post SUCCESSFUL!")
+                            print(f"✅ Post URL: {post_url}")
+                            
+                            # Double-check by trying to fetch the post
+                            await self._verify_post_creation(access_token, post_id_header)
+                            
+                            return {
+                                'post_id': post_id_header,
+                                'post_url': post_url,
+                                'status': 'published',
+                                'response_status': resp.status,
+                                'error': None,
+                                'note': 'real_linkedin_post_created'
+                            }
+                        else:
+                            print(f"❌ No post ID received from LinkedIn")
+                            return {
+                                'status': 'failed',
+                                'error': 'LinkedIn API returned success but no post ID',
+                                'response_status': resp.status,
+                                'response_body': result_text
+                            }
                     else:
                         error_msg = f"HTTP {resp.status}: {result_text}"
-                        print(f"❌ REAL LinkedIn API failed: {error_msg}")
+                        print(f"❌ REAL LinkedIn API FAILED: {error_msg}")
                         
-                        # Fallback to simulation but log the real error
-                        simulated_result = await self._simulate_successful_post(access_token, content)
-                        simulated_result['real_api_error'] = error_msg
-                        return simulated_result
+                        # Provide detailed error information
+                        detailed_error = self._parse_linkedin_error(result_text)
+                        return {
+                            'status': 'failed',
+                            'error': detailed_error,
+                            'response_status': resp.status,
+                            'response_body': result_text
+                        }
         
         except Exception as e:
             print(f"❌ REAL LinkedIn API error: {e}")
             print(f"🔍 Traceback: {traceback.format_exc()}")
             
-            # Fallback to simulation but log the real error
-            simulated_result = await self._simulate_successful_post(access_token, content)
-            simulated_result['real_api_error'] = str(e)
-            return simulated_result
+            return {
+                'status': 'failed',
+                'error': f'API call failed: {str(e)}',
+                'exception': traceback.format_exc()
+            }
     
-    async def _simulate_successful_post(self, access_token: str, content: str) -> Dict[str, Any]:
-        """Simulate a successful post as fallback - but provide useful URL"""
-        print("🔄 FALLBACK: Using simulated post")
-        
-        simulated_post_id = f"{random.randint(1000000000, 9999999999)}"
-        
-        # Instead of no URL, provide the user's LinkedIn feed URL
-        # This way users can still click to see their LinkedIn and check if the post is there
+    def _parse_linkedin_error(self, error_text: str) -> str:
+        """Parse LinkedIn API error response for better error messages"""
         try:
-            profile_url = await self.get_user_profile_url(access_token)
-            simulated_post_url = profile_url
-            print(f"🎯 SIMULATED: Redirecting to LinkedIn feed: {profile_url}")
+            error_data = json.loads(error_text)
+            message = error_data.get('message', 'Unknown error')
+            
+            # Common LinkedIn API errors
+            if 'insufficient permissions' in message.lower():
+                return f"LinkedIn permissions error: {message}. Please ensure your app has 'w_member_social' scope."
+            elif 'author' in message.lower():
+                return f"LinkedIn author error: {message}. User may not have posting permissions."
+            elif 'validation' in message.lower():
+                return f"LinkedIn validation error: {message}. Check post content format."
+            else:
+                return f"LinkedIn API error: {message}"
+                
         except:
-            simulated_post_url = "https://www.linkedin.com/feed/"
-            print(f"🎯 SIMULATED: Using default LinkedIn feed URL")
-        
-        print(f"🎯 SIMULATED: Post ID: {simulated_post_id}")
-        print("🎯 SIMULATED: Points awarded - check your LinkedIn feed for the post")
+            return f"LinkedIn error: {error_text}"
+    
+    async def _verify_post_creation(self, access_token: str, post_urn: str):
+        """Verify that the post was actually created by trying to fetch it"""
+        try:
+            headers = {
+                'Authorization': f'Bearer {access_token}',
+                'X-Restli-Protocol-Version': '2.0.0'
+            }
+            
+            print(f"🔍 Verifying post creation: {post_urn}")
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{self.api_base}/ugcPosts/{post_urn}",
+                    headers=headers
+                ) as resp:
+                    if resp.status == 200:
+                        print(f"✅ Post verification SUCCESSFUL - post exists!")
+                        post_data = await resp.json()
+                        print(f"✅ Post details: {post_data}")
+                    else:
+                        print(f"⚠️ Post verification failed - status {resp.status}")
+                        
+        except Exception as e:
+            print(f"⚠️ Post verification error: {e}")
+    
+    def _simulate_successful_post(self, content: str) -> Dict[str, Any]:
+        """ONLY use simulation when explicitly needed"""
+        print("🎯 EXPLICIT SIMULATION - No real LinkedIn post created")
         
         return {
-            'post_id': simulated_post_id,
-            'post_url': simulated_post_url,  # User's LinkedIn feed URL
+            'post_id': f"simulated_{random.randint(1000000000, 9999999999)}",
+            'post_url': None,  # No URL for simulated posts
             'status': 'published',
             'response_status': 201,
-            'note': 'simulated_post_redirect_to_feed',
+            'note': 'explicit_simulation_no_linkedin_post',
             'error': None
         }
     
     async def get_post_metrics(self, access_token: str, post_id: str) -> Dict[str, Any]:
-        # Return fake metrics for simulated posts
+        # For now, return basic metrics
         return {
-            'reactions': random.randint(5, 50),
-            'comments': random.randint(0, 10),
-            'shares': random.randint(0, 5),
-            'views': random.randint(100, 1000)
-                        }
+            'reactions': 0,
+            'comments': 0,
+            'shares': 0,
+            'views': 0
+            }
