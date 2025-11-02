@@ -6,6 +6,7 @@ import config
 import re
 import random
 import traceback
+import json
 
 class LinkedInPlatform(BasePlatform):
     def __init__(self):
@@ -23,7 +24,7 @@ class LinkedInPlatform(BasePlatform):
             'client_id': self.client_id,
             'redirect_uri': self.redirect_uri,
             'state': state,
-            'scope': ' '.join(self.scopes'
+            'scope': ' '.join(self.scopes)  # FIXED: Added missing closing parenthesis
         }
         return f"{self.auth_url}?{urlencode(params)}"
     
@@ -67,7 +68,7 @@ class LinkedInPlatform(BasePlatform):
                 ) as resp:
                     if resp.status == 200:
                         userinfo_data = await resp.json()
-                        print(f"✅ Userinfo data: {userinfo_data}")
+                        print(f"✅ Userinfo data received")
                         
                         # Extract user ID from the 'sub' field
                         user_id = userinfo_data.get('sub')
@@ -114,7 +115,7 @@ class LinkedInPlatform(BasePlatform):
             print(f"❌ Access token invalid or insufficient permissions")
             return {
                 'status': 'failed',
-                'error': 'Invalid access token or insufficient LinkedIn permissions',
+                'error': 'Invalid access token or insufficient LinkedIn permissions. Please reconnect your LinkedIn account.',
                 'profile_data': profile_data
             }
         
@@ -230,10 +231,13 @@ class LinkedInPlatform(BasePlatform):
         try:
             error_data = json.loads(error_text)
             message = error_data.get('message', 'Unknown error')
+            error_code = error_data.get('code', '')
             
             # Common LinkedIn API errors
-            if 'insufficient permissions' in message.lower():
-                return f"LinkedIn permissions error: {message}. Please ensure your app has 'w_member_social' scope."
+            if 'REVOKED_ACCESS_TOKEN' in error_code:
+                return "Your LinkedIn access token has been revoked. Please reconnect your LinkedIn account using '/connect'."
+            elif 'insufficient permissions' in message.lower():
+                return f"LinkedIn permissions error: {message}. Please ensure your app has 'w_member_social' scope and reconnect your account."
             elif 'author' in message.lower():
                 return f"LinkedIn author error: {message}. User may not have posting permissions."
             elif 'validation' in message.lower():
@@ -269,19 +273,6 @@ class LinkedInPlatform(BasePlatform):
         except Exception as e:
             print(f"⚠️ Post verification error: {e}")
     
-    def _simulate_successful_post(self, content: str) -> Dict[str, Any]:
-        """ONLY use simulation when explicitly needed"""
-        print("🎯 EXPLICIT SIMULATION - No real LinkedIn post created")
-        
-        return {
-            'post_id': f"simulated_{random.randint(1000000000, 9999999999)}",
-            'post_url': None,  # No URL for simulated posts
-            'status': 'published',
-            'response_status': 201,
-            'note': 'explicit_simulation_no_linkedin_post',
-            'error': None
-        }
-    
     async def get_post_metrics(self, access_token: str, post_id: str) -> Dict[str, Any]:
         # For now, return basic metrics
         return {
@@ -289,4 +280,4 @@ class LinkedInPlatform(BasePlatform):
             'comments': 0,
             'shares': 0,
             'views': 0
-            }
+        }
