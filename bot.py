@@ -38,6 +38,8 @@ class PlatformSelect(discord.ui.Select):
         super().__init__(placeholder="Choose a platform to connect...", options=options)
     
     async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
         platform = self.values[0].lower().replace("/", "").replace("instagram", "meta")
         base_url = os.getenv('BASE_URL', config.BASE_URL)
         oauth_url = f"{base_url}/oauth/{platform}/start?discord_id={self.user_id}"
@@ -52,7 +54,7 @@ class PlatformSelect(discord.ui.Select):
         button = discord.ui.Button(label=f"Connect {self.values[0]}", style=discord.ButtonStyle.link, url=oauth_url)
         view.add_item(button)
         
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 @bot.tree.command(name="connect", description="Connect your social media accounts (LinkedIn, Instagram, TikTok)")
 async def connect(interaction: discord.Interaction):
@@ -167,6 +169,8 @@ class PostPlatformSelect(discord.ui.Select):
         super().__init__(placeholder="Choose platform to post...", options=options)
     
     async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
         platform = self.values[0]
         
         embed = discord.Embed(
@@ -179,7 +183,7 @@ class PostPlatformSelect(discord.ui.Select):
         embed.set_footer(text=f"Click 'Confirm & Post' to publish to {platform.title()}")
         
         view = ConfirmPostView(self.mission, self.user, platform)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 @bot.tree.command(name="post", description="Post a mission to your social media")
 @app_commands.describe(mission_id="The ID of the mission to post")
@@ -280,7 +284,7 @@ class ConfirmPostView(discord.ui.View):
     
     @discord.ui.button(label="Confirm & Post", style=discord.ButtonStyle.green)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
         
         try:
             result = await publishing_service.publish_mission(
@@ -326,7 +330,8 @@ class ConfirmPostView(discord.ui.View):
     
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.red)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Post cancelled.", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        await interaction.followup.send("Post cancelled.", ephemeral=True)
 
 @bot.tree.command(name="score", description="Check your current score")
 async def score(interaction: discord.Interaction):
@@ -441,32 +446,38 @@ async def rolesync(interaction: discord.Interaction):
 @app_commands.describe(platform="The platform to reconnect (linkedin, meta, tiktok)")
 async def reconnect(interaction: discord.Interaction, platform: str):
     """Reconnect social media account if token is revoked"""
-    await interaction.response.defer(ephemeral=True, thinking=True)
-    
-    session = get_session()
     try:
-        user = session.query(User).filter_by(discord_id=str(interaction.user.id)).first()
-        if not user:
-            await interaction.followup.send("Please run `/connect` first to set up your account!", ephemeral=True)
-            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
         
-        # Mark the social account as inactive to force reconnection
-        social_account = session.query(SocialAccount).filter_by(
-            user_id=user.id,
-            platform=platform.lower()
-        ).first()
-        
-        if social_account:
-            social_account.is_active = False
-            session.commit()
-            await interaction.followup.send(f"✅ {platform.title()} account marked for reconnection. Please use `/connect` to reconnect.", ephemeral=True)
-        else:
-            await interaction.followup.send(f"No {platform.title()} account found. Please use `/connect` to connect.", ephemeral=True)
+        session = get_session()
+        try:
+            user = session.query(User).filter_by(discord_id=str(interaction.user.id)).first()
+            if not user:
+                await interaction.followup.send("Please run `/connect` first to set up your account!", ephemeral=True)
+                return
             
+            # Mark the social account as inactive to force reconnection
+            social_account = session.query(SocialAccount).filter_by(
+                user_id=user.id,
+                platform=platform.lower()
+            ).first()
+            
+            if social_account:
+                social_account.is_active = False
+                session.commit()
+                await interaction.followup.send(f"✅ {platform.title()} account marked for reconnection. Please use `/connect` to reconnect.", ephemeral=True)
+            else:
+                await interaction.followup.send(f"No {platform.title()} account found. Please use `/connect` to connect.", ephemeral=True)
+                
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {str(e)}", ephemeral=True)
+        finally:
+            session.close()
     except Exception as e:
-        await interaction.followup.send(f"❌ Error: {str(e)}", ephemeral=True)
-    finally:
-        session.close()
+        try:
+            await interaction.response.send_message("❌ Command failed. Please try again.", ephemeral=True)
+        except:
+            pass
 
 # FIXED MISSION COMMAND
 @bot.tree.command(name="mission", description="[ADMIN] Manage missions")
