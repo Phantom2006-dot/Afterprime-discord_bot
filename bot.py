@@ -1,6 +1,6 @@
 import discord
 from discord import app_commands
-from discord.ext import commands, tasks
+from discord.ext import commands
 import asyncio
 from datetime import datetime, timedelta
 import config
@@ -17,52 +17,15 @@ intents.members = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Self-ping configuration
-SELF_PING_INTERVAL = 14  # 14 minutes (less than Render's 15 min timeout)
-
 @bot.event
 async def on_ready():
     print(f'{bot.user} has connected to Discord!')
     print(f'Multi-Platform Support: LinkedIn, Instagram/Meta, TikTok')
-    
-    # Start the self-ping loop
-    self_ping_loop.start()
-    print("✅ Self-ping loop started to prevent Render sleep")
-    
     try:
         synced = await bot.tree.sync()
         print(f'Synced {len(synced)} command(s)')
     except Exception as e:
         print(f'Failed to sync commands: {e}')
-
-@bot.event
-async def on_connect():
-    bot.start_time = datetime.now()
-    print(f"🤖 Bot connected at {bot.start_time}")
-
-@tasks.loop(minutes=SELF_PING_INTERVAL)
-async def self_ping_loop():
-    """Self-ping to keep the bot awake on Render"""
-    try:
-        # Update bot presence (this counts as activity)
-        await bot.change_presence(
-            activity=discord.Activity(
-                type=discord.ActivityType.watching,
-                name=f"{len(bot.guilds)} servers | /help"
-            )
-        )
-        
-        print(f"🔁 Self-ping executed at {datetime.now().strftime('%H:%M:%S')} | Guilds: {len(bot.guilds)} | Ping: {round(bot.latency * 1000)}ms")
-            
-    except Exception as e:
-        print(f"❌ Self-ping error: {e}")
-
-@self_ping_loop.before_loop
-async def before_self_ping():
-    """Wait until the bot is ready before starting the ping loop"""
-    await bot.wait_until_ready()
-
-# ALL YOUR EXISTING CODE BELOW - NO CHANGES MADE
 
 class PlatformSelect(discord.ui.Select):
     def __init__(self, user_id: str):
@@ -707,4 +670,4 @@ def get_next_role(current_score):
 if __name__ == '__main__':
     from database import init_db
     init_db()
-    bot.run(config.DISCORD_BOT_TOKEN)
+    bot.run(config.DISCORD_BOT_TOKEN)                                 
