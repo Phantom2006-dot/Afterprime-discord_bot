@@ -17,9 +17,8 @@ aiohttp==3.13.2
 # Environment & Utilities
 python-dotenv==1.0.1
 cryptography==43.0.3
-pydantic==2.9.2
+pydantic-core==2.3.0  # Pre-compiled version
 python-multipart==0.0.9
 
-discord.py==2.3.2
-python-dotenv==1.0.0
-pydantic-core==2.3.0  # Pre-compiled version
+
+
