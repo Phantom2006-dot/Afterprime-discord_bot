@@ -1,24 +1,21 @@
---only-binary=:all:
+--only-binary=all
 
 # Core bot & web server
-discord.py==2.4.0
-fastapi==0.115.0
-uvicorn[standard]==0.30.1
+discord.py==2.3.2  # Downgraded - 2.4.0 might have issues
+fastapi==0.104.1  # Compatible version
+uvicorn[standard]==0.24.0  # Stable version
 
 # Database
-sqlalchemy==2.0.34
-psycopg2-binary==2.9.11
+sqlalchemy==2.0.23  # Stable version
+psycopg2-binary==2.9.9  # Slightly older but stable
 
 # Networking & Auth
-requests==2.32.3
-requests-oauthlib==2.0.0
-aiohttp==3.13.2
+requests==2.31.0
+requests-oauthlib==1.3.1
+aiohttp==3.8.6
 
 # Environment & Utilities
-python-dotenv==1.0.1
-cryptography==43.0.3
-pydantic-core==2.3.0  # Pre-compiled version
-python-multipart==0.0.9
-
-
-
+python-dotenv==1.0.0
+cryptography==41.0.8  # Pre-compiled wheel available
+pydantic==1.10.12  # Use pydantic v1 instead of pydantic-core
+python-multipart==0.0.6
