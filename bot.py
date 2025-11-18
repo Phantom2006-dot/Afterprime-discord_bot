@@ -271,44 +271,54 @@ async def on_message_delete(message: discord.Message):
     finally:
         session.close()
 
-@bot.command(name='submit')
-async def submit(ctx, *, content: str = ""):
+@bot.tree.command(name="submit", description="Submit your content to Social Army for judging")
+@app_commands.describe(
+    url="URL to your social media post (optional if attaching an image)",
+    image="Attach an image/screenshot (optional if providing a URL)"
+)
+async def submit(interaction: discord.Interaction, url: str = None, image: discord.Attachment = None):
     """Submit content to Social Army for judging"""
-    if ctx.channel.id != config.SOCIAL_ARMY_CHANNEL_ID:
-        await ctx.message.delete()
-        dm = await ctx.author.create_dm()
-        await dm.send(f"❌ Please use the !submit command in <#{config.SOCIAL_ARMY_CHANNEL_ID}>")
+    if interaction.channel.id != config.SOCIAL_ARMY_CHANNEL_ID:
+        await interaction.response.send_message(
+            f"❌ Please use the /submit command in <#{config.SOCIAL_ARMY_CHANNEL_ID}>",
+            ephemeral=True
+        )
         return
     
-    discord_id = str(ctx.author.id)
+    discord_id = str(interaction.user.id)
     
     can_submit, current_count = check_daily_submission_limit(discord_id)
     if not can_submit:
-        await ctx.message.delete()
-        await ctx.send(f"❌ {ctx.author.mention} You've reached your daily submission limit ({config.DAILY_SUBMISSION_LIMIT} submissions per day). Try again tomorrow!", delete_after=10)
+        await interaction.response.send_message(
+            f"❌ You've reached your daily submission limit ({config.DAILY_SUBMISSION_LIMIT} submissions per day). Try again tomorrow!",
+            ephemeral=True
+        )
         return
     
-    is_valid, submission_url = validate_submission_content(content, ctx.message.attachments)
-    if not is_valid:
-        await ctx.message.delete()
-        await ctx.send(f"❌ {ctx.author.mention} Please include a URL or attach a file with your submission.", delete_after=10)
+    if not url and not image:
+        await interaction.response.send_message(
+            "❌ Please provide either a URL or attach an image with your submission.",
+            ephemeral=True
+        )
         return
     
-    await ctx.message.delete()
+    submission_url = url if url else image.url
+    
+    await interaction.response.defer()
     
     embed = discord.Embed(
         title="📝 Social Army Submission",
-        description=f"Submitted by {ctx.author.mention}",
+        description=f"Submitted by {interaction.user.mention}",
         color=discord.Color.blue(),
         timestamp=datetime.utcnow()
     )
     embed.add_field(name="Content", value=submission_url, inline=False)
     embed.set_footer(text=f"Submission {current_count + 1}/{config.DAILY_SUBMISSION_LIMIT} today")
     
-    if ctx.message.attachments and ctx.message.attachments[0].content_type and ctx.message.attachments[0].content_type.startswith('image/'):
-        embed.set_image(url=ctx.message.attachments[0].url)
+    if image and image.content_type and image.content_type.startswith('image/'):
+        embed.set_image(url=image.url)
     
-    submission_message = await ctx.send(embed=embed)
+    submission_message = await interaction.followup.send(embed=embed)
     
     for emoji in config.EMOJI_POINTS.keys():
         try:
@@ -327,15 +337,15 @@ async def submit(ctx, *, content: str = ""):
         )
         session.add(submission)
         session.commit()
-        print(f"✅ Submission created for {ctx.author} - Message ID: {submission_message.id}")
+        print(f"✅ Submission created for {interaction.user} - Message ID: {submission_message.id}")
     except Exception as e:
         session.rollback()
         print(f"❌ Error saving submission: {e}")
     finally:
         session.close()
 
-@bot.tree.command(name="social-leaderboard", description="View the monthly Social Army leaderboard")
-async def social_leaderboard(interaction: discord.Interaction):
+@bot.tree.command(name="rankings", description="View the monthly Social Army rankings")
+async def rankings(interaction: discord.Interaction):
     """Display monthly leaderboard"""
     await interaction.response.defer()
     
@@ -353,7 +363,7 @@ async def social_leaderboard(interaction: discord.Interaction):
         
         month_name = datetime.utcnow().strftime('%B %Y')
         embed = discord.Embed(
-            title=f"🏆 Social Army Leaderboard - {month_name}",
+            title=f"🏆 Social Army Rankings - {month_name}",
             description="Top contributors this month:",
             color=discord.Color.gold()
         )
