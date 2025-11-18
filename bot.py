@@ -4,7 +4,8 @@ from discord.ext import commands, tasks
 from datetime import datetime
 from sqlalchemy import func
 import config
-from database import get_session, SocialScore, SocialMessageScore
+from database import get_session, SocialScore, SocialMessageScore, SocialSubmission
+import re
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -31,6 +32,35 @@ def is_owner(user_id: int, guild: discord.Guild) -> bool:
     """Check if user is server owner"""
     return guild.owner_id == user_id
 
+def get_current_date_key():
+    """Get current date in YYYY-MM-DD format"""
+    return datetime.utcnow().strftime('%Y-%m-%d')
+
+def check_daily_submission_limit(discord_id: str) -> tuple[bool, int]:
+    """Check if user has reached daily submission limit. Returns (can_submit, current_count)"""
+    date_key = get_current_date_key()
+    session = get_session()
+    try:
+        count = session.query(SocialSubmission).filter_by(
+            discord_id=discord_id,
+            date_key=date_key
+        ).count()
+        return count < config.DAILY_SUBMISSION_LIMIT, count
+    finally:
+        session.close()
+
+def validate_submission_content(content: str, attachments: list) -> tuple[bool, str]:
+    """Validate submission has URL or attachment. Returns (is_valid, url_or_attachment)"""
+    url_pattern = r'https?://[^\s]+'
+    urls = re.findall(url_pattern, content)
+    
+    if urls:
+        return True, urls[0]
+    elif attachments:
+        return True, attachments[0].url
+    else:
+        return False, ""
+
 @bot.event
 async def on_ready():
     print(f'{bot.user} has connected to Discord!')
@@ -51,9 +81,6 @@ async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
     if reaction.message.channel.id != config.SOCIAL_ARMY_CHANNEL_ID:
         return
     
-    if reaction.message.author.bot:
-        return
-    
     emoji_str = str(reaction.emoji)
     
     if emoji_str not in config.EMOJI_POINTS:
@@ -65,20 +92,32 @@ async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
     
     if not is_judge(member):
         await reaction.remove(user)
+        print(f"🚫 Removed unauthorized reaction {emoji_str} from {user.name} (not a judge)")
         return
     
     if emoji_str in config.OWNER_ONLY_EMOJIS and not is_owner(user.id, reaction.message.guild):
         await reaction.remove(user)
+        print(f"🚫 Removed owner-only reaction {emoji_str} from {user.name}")
         return
-    
-    points = config.EMOJI_POINTS[emoji_str]
-    month_key = get_current_month_key()
-    author_id = str(reaction.message.author.id)
-    judge_id = str(user.id)
-    message_id = reaction.message.id
     
     session = get_session()
     try:
+        submission = session.query(SocialSubmission).filter_by(
+            message_id=reaction.message.id
+        ).first()
+        
+        if submission:
+            author_id = submission.discord_id
+        elif not reaction.message.author.bot:
+            author_id = str(reaction.message.author.id)
+        else:
+            return
+        
+        points = config.EMOJI_POINTS[emoji_str]
+        month_key = get_current_month_key()
+        judge_id = str(user.id)
+        message_id = reaction.message.id
+        
         existing_score = session.query(SocialMessageScore).filter_by(
             message_id=message_id,
             judge_id=judge_id,
@@ -104,19 +143,24 @@ async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
         ).first()
         
         if not user_score:
+            try:
+                submission_author = await reaction.message.guild.fetch_member(int(author_id))
+                username = str(submission_author)
+            except (discord.NotFound, discord.HTTPException):
+                username = f"User {author_id}"
+            
             user_score = SocialScore(
                 discord_id=author_id,
-                discord_username=str(reaction.message.author),
+                discord_username=username,
                 month_key=month_key,
                 points=points
             )
             session.add(user_score)
         else:
             user_score.points += points
-            user_score.discord_username = str(reaction.message.author)
         
         session.commit()
-        print(f"✅ Added {points} points to {reaction.message.author} for {emoji_str} from {user.name}")
+        print(f"✅ Added {points} points to user {author_id} for {emoji_str} from {user.name}")
         
     except Exception as e:
         session.rollback()
@@ -133,20 +177,27 @@ async def on_reaction_remove(reaction: discord.Reaction, user: discord.User):
     if reaction.message.channel.id != config.SOCIAL_ARMY_CHANNEL_ID:
         return
     
-    if reaction.message.author.bot:
-        return
-    
     emoji_str = str(reaction.emoji)
     
     if emoji_str not in config.EMOJI_POINTS:
         return
     
-    author_id = str(reaction.message.author.id)
     judge_id = str(user.id)
     message_id = reaction.message.id
     
     session = get_session()
     try:
+        submission = session.query(SocialSubmission).filter_by(
+            message_id=message_id
+        ).first()
+        
+        if submission:
+            author_id = submission.discord_id
+        elif not reaction.message.author.bot:
+            author_id = str(reaction.message.author.id)
+        else:
+            return
+        
         message_score = session.query(SocialMessageScore).filter_by(
             message_id=message_id,
             judge_id=judge_id,
@@ -167,7 +218,7 @@ async def on_reaction_remove(reaction: discord.Reaction, user: discord.User):
             
             session.delete(message_score)
             session.commit()
-            print(f"✅ Removed {points} points from {reaction.message.author} for {emoji_str} by {user.name}")
+            print(f"✅ Removed {points} points from user {author_id} for {emoji_str} by {user.name}")
         
     except Exception as e:
         session.rollback()
@@ -217,6 +268,69 @@ async def on_message_delete(message: discord.Message):
     except Exception as e:
         session.rollback()
         print(f"❌ Error handling message deletion: {e}")
+    finally:
+        session.close()
+
+@bot.command(name='submit')
+async def submit(ctx, *, content: str = ""):
+    """Submit content to Social Army for judging"""
+    if ctx.channel.id != config.SOCIAL_ARMY_CHANNEL_ID:
+        await ctx.message.delete()
+        dm = await ctx.author.create_dm()
+        await dm.send(f"❌ Please use the !submit command in <#{config.SOCIAL_ARMY_CHANNEL_ID}>")
+        return
+    
+    discord_id = str(ctx.author.id)
+    
+    can_submit, current_count = check_daily_submission_limit(discord_id)
+    if not can_submit:
+        await ctx.message.delete()
+        await ctx.send(f"❌ {ctx.author.mention} You've reached your daily submission limit ({config.DAILY_SUBMISSION_LIMIT} submissions per day). Try again tomorrow!", delete_after=10)
+        return
+    
+    is_valid, submission_url = validate_submission_content(content, ctx.message.attachments)
+    if not is_valid:
+        await ctx.message.delete()
+        await ctx.send(f"❌ {ctx.author.mention} Please include a URL or attach a file with your submission.", delete_after=10)
+        return
+    
+    await ctx.message.delete()
+    
+    embed = discord.Embed(
+        title="📝 Social Army Submission",
+        description=f"Submitted by {ctx.author.mention}",
+        color=discord.Color.blue(),
+        timestamp=datetime.utcnow()
+    )
+    embed.add_field(name="Content", value=submission_url, inline=False)
+    embed.set_footer(text=f"Submission {current_count + 1}/{config.DAILY_SUBMISSION_LIMIT} today")
+    
+    if ctx.message.attachments and ctx.message.attachments[0].content_type and ctx.message.attachments[0].content_type.startswith('image/'):
+        embed.set_image(url=ctx.message.attachments[0].url)
+    
+    submission_message = await ctx.send(embed=embed)
+    
+    for emoji in config.EMOJI_POINTS.keys():
+        try:
+            await submission_message.add_reaction(emoji)
+        except Exception as e:
+            print(f"⚠️ Failed to add emoji {emoji}: {e}")
+    
+    session = get_session()
+    try:
+        date_key = get_current_date_key()
+        submission = SocialSubmission(
+            discord_id=discord_id,
+            date_key=date_key,
+            message_id=submission_message.id,
+            submission_url=submission_url
+        )
+        session.add(submission)
+        session.commit()
+        print(f"✅ Submission created for {ctx.author} - Message ID: {submission_message.id}")
+    except Exception as e:
+        session.rollback()
+        print(f"❌ Error saving submission: {e}")
     finally:
         session.close()
 
