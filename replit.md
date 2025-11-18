@@ -1,118 +1,98 @@
-# Social Army Discord Bot - Multi-Platform Edition
+# Social Army Discord Bot - Reaction-Based Scoring Edition
 
 ## Overview
-A Discord bot that gamifies brand amplification through social media missions across LinkedIn, Instagram/Meta, and TikTok. Users connect their social accounts, post brand missions with one click, and earn points through engagement tracking that contribute to monthly leaderboards and role progression.
+A simplified Discord bot that gamifies social media engagement through reaction-based scoring. Judges award points to user submissions using emoji reactions, creating a competitive monthly leaderboard.
 
 ## Recent Changes
-- **2025-10-31**: Multi-platform expansion
-  - Added support for LinkedIn, Instagram/Meta, and TikTok
-  - Implemented platform-specific OAuth flows and adapters
-  - Created publishing service with platform-specific content transformation
-  - Integrated Bitly link shortener for click tracking
-  - Added engagement tracking workers for automated metrics polling
-  - Enhanced database schema for multi-platform support
-  - Updated all bot commands to support platform selection
-  
+- **2025-11-18**: Major Simplification
+  - Removed all OAuth integrations (LinkedIn, Meta, Instagram, TikTok)
+  - Removed external platform posting functionality
+  - Removed mission system and automated posting
+  - Removed link shortener and engagement tracking workers
+  - Removed token encryption system
+  - Simplified to reaction-based scoring only
+  - Reduced database to 2 simple tables
+  - Implemented judge role system with emoji scoring
+  - Added monthly reset functionality
+  - Removed complex dependencies (FastAPI, cryptography, requests)
+
+- **2025-10-31**: Multi-platform expansion (REMOVED)
 - **2025-10-30**: Initial project setup
-  - Created Discord bot with slash commands
-  - Implemented LinkedIn OAuth integration
-  - Set up PostgreSQL database with user, mission, and scoring tables
-  - Built FastAPI OAuth callback server
-  - Implemented point scoring and role progression system
 
 ## Project Architecture
 
 ### Tech Stack
-- **Language**: Python 3.11
+- **Language**: Python 3.12
 - **Discord Framework**: discord.py 2.3.2
-- **Web Framework**: FastAPI 0.104.1
 - **Database**: PostgreSQL (via SQLAlchemy ORM)
-- **OAuth**: Multi-platform OAuth 2.0 (LinkedIn, Meta, TikTok)
-- **Security**: Fernet encryption for tokens
-- **Link Tracking**: Bitly API integration
-- **Background Workers**: AsyncIO-based engagement polling
+- **Environment**: python-dotenv
 
 ### File Structure
 ```
 .
-├── bot.py                  # Main Discord bot with slash commands
-├── oauth_server.py         # Multi-platform FastAPI OAuth server
-├── database.py             # Enhanced SQLAlchemy models
-├── encryption.py           # Token encryption utilities
-├── config.py               # Multi-platform configuration
-├── start.py                # Startup script (bot + OAuth + workers)
-├── publishing_service.py   # Unified publishing service
-├── engagement_workers.py   # Background metrics polling
-├── link_shortener.py       # Bitly integration
-├── platforms/              # Platform-specific adapters
-│   ├── __init__.py
-│   ├── base.py            # Base platform interface
-│   ├── linkedin.py        # LinkedIn adapter
-│   ├── meta.py            # Meta/Instagram adapter
-│   └── tiktok.py          # TikTok adapter
+├── bot.py                  # Main Discord bot with reaction handlers and commands
+├── database.py             # Simplified SQLAlchemy models (2 tables)
+├── config.py               # Simple configuration
+├── start.py                # Startup script (bot only)
 ├── requirements.txt        # Python dependencies
-├── .env.example           # Environment template
-├── SETUP_GUIDE.md         # Complete setup instructions
-└── README.md              # Project documentation
+├── SETUP_GUIDE.md          # Setup instructions
+└── replit.md               # This file
 ```
 
 ### Database Schema
-- **users**: Discord user info, scores, and current rank
-- **social_accounts**: Multi-platform accounts with encrypted tokens, scopes, and metadata
-- **missions**: Admin-created missions with multi-platform configs and media
-- **posts**: User posts with platform-specific IDs, URLs, and short links
-- **engagement_snapshots**: Historical engagement metrics polling data
+- **social_scores**: Monthly point totals per user (discord_id, month_key, points)
+- **social_message_scores**: Individual reaction scores (message_id, author_id, judge_id, emoji, points)
 
 ### Discord Commands
 
 #### User Commands
-- `/connect` - Connect LinkedIn account via OAuth
-- `/missions` - View active missions
-- `/post` - Post a mission to LinkedIn
-- `/score` - View personal score and rank
-- `/leaderboard` - View top 10 performers
-- `/rolesync` - Sync Discord role based on score
+- `/social-leaderboard` - View monthly leaderboard
+- `/social-stats [@user]` - View user statistics
+- `/social-config` - View configuration
 
 #### Admin Commands
-- `/mission new` - Create new mission (opens modal)
-- `/mission close` - Close an active mission
+- `/social-reset` - Reset monthly scores and announce winners
+- `/social-export [limit]` - Export top users to text file
 
-### Scoring System
-- Publish success: +10 points
-- On-time bonus (≤24h): +5 points
-- Role thresholds:
-  - Recruit: 0-49 points
-  - Soldier: 50-199 points
-  - General: 200-499 points
-  - Warlord: 500+ points
+### Emoji Scoring System
+**Effort**: ✍️ (1), 🎨 (3), 🎬 (5), 🎞️ (8)
+**Creativity**: 💡 (2), 🤯 (4)
+**Reach**: 📊 (2), 🔥 (4), 🚀 (8)
+**Consistency**: 🧡 (2), 💪 (3)
+**Bonus**: 🏅 (5), 👑 (10) - Owner only
+
+### How It Works
+1. Users post social media links/screenshots in #social-army channel
+2. Judges (users with "Social Army Judge" role) react with scoring emojis
+3. Bot automatically adds/subtracts points when reactions are added/removed
+4. Monthly leaderboard tracks top contributors
+5. Admins can reset monthly and announce winners
 
 ## User Preferences
-- No specific preferences set yet
+- Prefer simplified, maintainable code
+- Focus on Discord-native functionality
+- Remove external dependencies where possible
 
 ## Setup Status
-- ✅ Python 3.11 installed
-- ✅ All dependencies installed
+- ✅ Python 3.12 installed
+- ✅ Dependencies simplified and installed
 - ✅ PostgreSQL database created and initialized
-- ✅ Discord bot code complete
-- ✅ OAuth server running on port 8000
-- ✅ All credentials configured in Replit Secrets
-- ✅ Bot connected to Discord (Afterprime_bot#3779)
-- ✅ 7 commands synced successfully
-- ✅ Multi-platform support active (LinkedIn, Instagram/Meta, TikTok)
+- ✅ Discord bot code complete with reaction handlers
+- ⏳ Awaiting Discord bot token configuration
+
+## Required Environment Variables
+- `DISCORD_BOT_TOKEN` - Bot token from Discord Developer Portal
+- `DISCORD_GUILD_ID` - Your Discord server ID
+- `SOCIAL_ARMY_CHANNEL_ID` - Channel ID for submissions
+
+## Optional Environment Variables
+- `ADMIN_ROLE_NAME` - Admin role name (default: "Admin")
+- `SOCIAL_ARMY_JUDGE_ROLE_NAME` - Judge role name (default: "Social Army Judge")
+- `SOCIAL_ARMY_ELITE_ROLE_NAME` - Elite role name (default: "Social Army Elite")
+- `LEADERBOARD_SIZE` - Number of users to show (default: 10)
 
 ## Next Steps
-1. User provides Discord bot token and server configuration
-2. User sets up LinkedIn OAuth app and provides credentials
-3. User creates Discord roles and channels, provides IDs
+1. Set DISCORD_BOT_TOKEN in Replit Secrets
+2. Set DISCORD_GUILD_ID and SOCIAL_ARMY_CHANNEL_ID
+3. Create "Social Army Judge" role in Discord server
 4. Test bot functionality
-5. Deploy to production
-
-## Phase 2 Features (Future)
-- Instagram Business integration
-- TikTok integration
-- Bitly link shortening for click tracking
-- Engagement-based scoring (reactions, views)
-- Background workers for automated metrics polling
-- Monthly leaderboard rollover and winner announcements
-- Audit logging channel
-- `/disconnect` command with token revocation
