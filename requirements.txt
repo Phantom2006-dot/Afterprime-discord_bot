@@ -11,3 +11,7 @@ discord.py
 psycopg2-binary
 python-dotenv
 sqlalchemy
+discord.py
+psycopg2-binary
+python-dotenv
+sqlalchemy
