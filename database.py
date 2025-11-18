@@ -39,6 +39,21 @@ class SocialMessageScore(Base):
         Index('idx_message_judge_emoji', 'message_id', 'judge_id', 'emoji'),
     )
 
+class SocialSubmission(Base):
+    """Tracks daily submissions for rate limiting"""
+    __tablename__ = 'social_submissions'
+    
+    id = Column(Integer, primary_key=True)
+    discord_id = Column(String(50), nullable=False, index=True)
+    date_key = Column(String(10), nullable=False, index=True)  # Format: YYYY-MM-DD
+    message_id = Column(BigInteger, nullable=False)
+    submission_url = Column(String(500))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    __table_args__ = (
+        Index('idx_user_date', 'discord_id', 'date_key'),
+    )
+
 def init_db():
     """Initialize the database schema"""
     engine = create_engine(config.DATABASE_URL)
