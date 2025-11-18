@@ -4,6 +4,14 @@
 A simplified Discord bot that gamifies social media engagement through reaction-based scoring. Judges award points to user submissions using emoji reactions, creating a competitive monthly leaderboard.
 
 ## Recent Changes
+- **2025-11-18**: Command-Based Submission System
+  - Added !submit command for structured submissions
+  - Bot auto-adds all scoring emojis to submissions
+  - Automatic removal of unauthorized reactions (non-judges)
+  - Daily submission limit tracking (5 per day default)
+  - Support for URL and file attachments
+  - Enhanced reaction security with real-time monitoring
+
 - **2025-11-18**: Major Simplification
   - Removed all OAuth integrations (LinkedIn, Meta, Instagram, TikTok)
   - Removed external platform posting functionality
@@ -11,7 +19,7 @@ A simplified Discord bot that gamifies social media engagement through reaction-
   - Removed link shortener and engagement tracking workers
   - Removed token encryption system
   - Simplified to reaction-based scoring only
-  - Reduced database to 2 simple tables
+  - Reduced database to 3 simple tables
   - Implemented judge role system with emoji scoring
   - Added monthly reset functionality
   - Removed complex dependencies (FastAPI, cryptography, requests)
@@ -42,10 +50,12 @@ A simplified Discord bot that gamifies social media engagement through reaction-
 ### Database Schema
 - **social_scores**: Monthly point totals per user (discord_id, month_key, points)
 - **social_message_scores**: Individual reaction scores (message_id, author_id, judge_id, emoji, points)
+- **social_submissions**: Daily submission tracking (discord_id, date_key, message_id, submission_url)
 
 ### Discord Commands
 
 #### User Commands
+- `!submit [URL or attachment]` - Submit content for judging (NEW!)
 - `/social-leaderboard` - View monthly leaderboard
 - `/social-stats [@user]` - View user statistics
 - `/social-config` - View configuration
@@ -62,11 +72,13 @@ A simplified Discord bot that gamifies social media engagement through reaction-
 **Bonus**: 🏅 (5), 👑 (10) - Owner only
 
 ### How It Works
-1. Users post social media links/screenshots in #social-army channel
-2. Judges (users with "Social Army Judge" role) react with scoring emojis
-3. Bot automatically adds/subtracts points when reactions are added/removed
-4. Monthly leaderboard tracks top contributors
-5. Admins can reset monthly and announce winners
+1. Users submit content using `!submit [URL]` in #social-army channel
+2. Bot creates a submission embed and auto-adds all scoring emojis
+3. Judges (users with "Social Army Judge" role) click emojis to award points
+4. Unauthorized reactions are automatically removed in real-time
+5. Judges can remove their reactions to retract awarded points
+6. Monthly leaderboard tracks top contributors (max 5 submissions/day)
+7. Admins can reset monthly and announce winners
 
 ## User Preferences
 - Prefer simplified, maintainable code
