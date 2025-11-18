@@ -55,8 +55,8 @@ A simplified Discord bot that gamifies social media engagement through reaction-
 ### Discord Commands
 
 #### User Commands
-- `!submit [URL or attachment]` - Submit content for judging (NEW!)
-- `/social-leaderboard` - View monthly leaderboard
+- `/submit` - Submit content for judging (URL or image attachment)
+- `/rankings` - View monthly rankings leaderboard
 - `/social-stats [@user]` - View user statistics
 - `/social-config` - View configuration
 
@@ -72,12 +72,12 @@ A simplified Discord bot that gamifies social media engagement through reaction-
 **Bonus**: 🏅 (5), 👑 (10) - Owner only
 
 ### How It Works
-1. Users submit content using `!submit [URL]` in #social-army channel
+1. Users submit content using `/submit` in #social-army channel (with URL or image)
 2. Bot creates a submission embed and auto-adds all scoring emojis
 3. Judges (users with "Social Army Judge" role) click emojis to award points
 4. Unauthorized reactions are automatically removed in real-time
 5. Judges can remove their reactions to retract awarded points
-6. Monthly leaderboard tracks top contributors (max 5 submissions/day)
+6. Monthly rankings track top contributors (max 5 submissions/day)
 7. Admins can reset monthly and announce winners
 
 ## User Preferences
